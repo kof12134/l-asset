@@ -1,0 +1,201 @@
+{{define "content"}}
+<div id="app" x-data="financeManager()" x-init="init()">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">财务管理</h1>
+    <button @click="showMethodPicker = !showMethodPicker" class="text-sm text-gray-500 hover:text-primary-600 flex items-center gap-1 cursor-pointer bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-lg transition">
+      <span x-text="methodName"></span>
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+  </div>
+
+  <!-- 折旧方法选择卡片 -->
+  <div x-show="showMethodPicker" x-cloak class="card p-4 mb-6 border-2 border-primary-200 bg-primary-50">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-semibold text-gray-700">选择折旧方法</h3>
+      <button @click="showMethodPicker = false" class="text-gray-400 hover:text-gray-600">&times;</button>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <template x-for="m in methods" :key="m.id">
+        <div @click="switchMethod(m.id)"
+             class="border-2 rounded-xl p-3 cursor-pointer transition text-center"
+             :class="currentMethod === m.id ? 'border-primary-500 bg-white shadow-md' : 'border-gray-200 bg-white hover:border-gray-300'">
+          <div class="text-2xl mb-1" x-text="m.icon"></div>
+          <div class="text-sm font-medium text-gray-800" x-text="m.label"></div>
+          <div class="text-xs text-gray-400 mt-0.5" x-text="m.desc"></div>
+          <div x-show="currentMethod === m.id" class="mt-1 text-xs text-primary-600 font-medium">✓ 使用中</div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- 汇总卡片 -->
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+    <div class="card p-4 text-center">
+      <div class="text-xs text-gray-400 mb-1">资产原值合计</div>
+      <div class="text-2xl font-bold text-gray-800" x-text="fmt(totalPrice)"></div>
+    </div>
+    <div class="card p-4 text-center">
+      <div class="text-xs text-gray-400 mb-1">当前净值合计</div>
+      <div class="text-2xl font-bold text-green-600" x-text="fmt(netTotal)"></div>
+    </div>
+    <div class="card p-4 text-center">
+      <div class="text-xs text-gray-400 mb-1">累计折旧合计</div>
+      <div class="text-2xl font-bold text-primary-600" x-text="fmt(totalPrice - netTotal)"></div>
+    </div>
+  </div>
+
+  <!-- 按类型分组汇总 -->
+  <div class="card overflow-hidden mb-6">
+    <div class="px-4 py-3 border-b border-gray-200 font-semibold text-gray-700">按类型汇总</div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">类型</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">设备数量</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">原值</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">净值</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">累计折旧</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">折旧率</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="(g, t) in typeGroups" :key="t">
+            <tr class="border-b border-gray-100 hover:bg-gray-50">
+              <td class="px-4 py-3 font-medium text-gray-800" x-text="t"></td>
+              <td class="px-4 py-3 text-right text-gray-600" x-text="g.count"></td>
+              <td class="px-4 py-3 text-right text-gray-800 font-mono" x-text="fmt(g.original)"></td>
+              <td class="px-4 py-3 text-right text-green-600 font-mono" x-text="fmt(g.net)"></td>
+              <td class="px-4 py-3 text-right text-gray-500 font-mono" x-text="fmt(g.original - g.net)"></td>
+              <td class="px-4 py-3 text-right" x-text="g.rate"></td>
+            </tr>
+          </template>
+        </tbody>
+        <tfoot>
+          <tr class="bg-gray-50 font-semibold">
+            <td class="px-4 py-3 text-gray-800">合计</td>
+            <td class="px-4 py-3 text-right" x-text="totalCount"></td>
+            <td class="px-4 py-3 text-right font-mono" x-text="fmt(totalPrice)"></td>
+            <td class="px-4 py-3 text-right text-green-600 font-mono" x-text="fmt(netTotal)"></td>
+            <td class="px-4 py-3 text-right font-mono" x-text="fmt(totalPrice - netTotal)"></td>
+            <td class="px-4 py-3 text-right" x-text="totalRate"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- 明细 -->
+  <div class="card overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-200 font-semibold text-gray-700">设备明细</div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">资产编号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">类型</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">品牌</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">型号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">序列号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">采购日期</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">原值</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">月折旧</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">已折旧月</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">累计折旧</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">净值</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="item in items" :key="item.asset_tag">
+            <tr class="border-b border-gray-100 hover:bg-gray-50">
+              <td class="px-4 py-3"><a :href="'/asset/' + item.asset_tag" class="text-primary-500 hover:underline font-medium" x-text="item.asset_tag"></a></td>
+              <td class="px-4 py-3 text-gray-600" x-text="item.type"></td>
+              <td class="px-4 py-3 text-gray-600" x-text="item.brand"></td>
+              <td class="px-4 py-3 text-gray-600" x-text="item.model"></td>
+              <td class="px-4 py-3 text-gray-500 text-xs font-mono" x-text="item.serial || '-'"></td>
+              <td class="px-4 py-3 text-gray-600" x-text="item.purchase_date"></td>
+              <td class="px-4 py-3 text-right font-mono text-gray-800" x-text="fmt(item.purchase_price)"></td>
+              <td class="px-4 py-3 text-right font-mono text-gray-500" x-text="fmt(item.monthly_depreciation)"></td>
+              <td class="px-4 py-3 text-right text-gray-600" x-text="item.depreciation_months"></td>
+              <td class="px-4 py-3 text-right font-mono text-gray-500" x-text="fmt(item.total_depreciation)"></td>
+              <td class="px-4 py-3 text-right font-mono" :class="item.current_value <= 0 ? 'text-red-400' : 'text-green-600'" x-text="fmt(item.current_value)"></td>
+            </tr>
+          </template>
+          <tr x-show="items.length === 0">
+            <td colspan="11" class="text-center text-gray-400 py-6">暂无设备财务数据</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<style>
+[x-cloak] { display: none !important; }
+</style>
+
+<script>
+document.addEventListener('alpine:init', () => {
+  Alpine.data('financeManager', () => ({
+    items: [],
+    typeGroups: {},
+    totalPrice: 0,
+    netTotal: 0,
+    totalCount: 0,
+    currentMethod: 'straight-5y',
+    methodName: '直线法（5年）',
+    showMethodPicker: false,
+    methods: [
+      { id: 'straight-5y',  label: '直线法', desc: '5年·60个月', icon: '📐' },
+      { id: 'straight-3y',  label: '直线法', desc: '3年·36个月', icon: '📏' },
+      { id: 'straight-10y', label: '直线法', desc: '10年·120个月', icon: '📊' },
+      { id: 'dbl-declining-5y', label: '双倍余额', desc: '5年·加速', icon: '🚀' },
+      { id: 'sum-years-5y', label: '年数总和', desc: '5年·递减', icon: '📉' },
+    ],
+    init() {
+      this.loadData();
+    },
+    loadData() {
+      fetch('/api/finance/summary').then(r => r.json()).then(d => {
+        const names = {'straight-5y':'直线法（5年）','straight-3y':'直线法（3年）','straight-10y':'直线法（10年）','dbl-declining-5y':'双倍余额递减法（5年）','sum-years-5y':'年数总和法（5年）'};
+        this.currentMethod = d.method || 'straight-5y';
+        this.methodName = names[this.currentMethod] || this.currentMethod;
+        this.items = d.items || [];
+        this.totalPrice = d.total_price || 0;
+        this.netTotal = d.net_total || 0;
+        this.totalCount = d.item_count || 0;
+        const groups = {};
+        (this.items).forEach(it => {
+          if (!groups[it.type]) groups[it.type] = { original: 0, net: 0, count: 0 };
+          groups[it.type].original += it.purchase_price;
+          groups[it.type].net += it.current_value;
+          groups[it.type].count += 1;
+        });
+        Object.keys(groups).forEach(t => {
+          groups[t].rate = groups[t].original > 0 ? ((groups[t].original - groups[t].net) / groups[t].original * 100).toFixed(1) + '%' : '0%';
+        });
+        this.typeGroups = groups;
+      });
+    },
+    switchMethod(method) {
+      this.currentMethod = method;
+      this.showMethodPicker = false;
+      // Save to backend
+      fetch('/api/settings').then(r => r.json()).then(cfg => {
+        cfg.depreciation_method = method;
+        return fetch('/api/settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cfg)});
+      }).then(() => {
+        this.loadData();
+      });
+    },
+    fmt(v) {
+      if (v === undefined || v === null) return '0.00';
+      return (typeof v === 'number' ? v : parseFloat(v)).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    },
+    get totalRate() {
+      return this.totalPrice > 0 ? ((this.totalPrice - this.netTotal) / this.totalPrice * 100).toFixed(1) + '%' : '0%';
+    }
+  }));
+});
+</script>
+{{end}}

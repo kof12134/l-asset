@@ -1,0 +1,338 @@
+{{define "content"}}
+<div id="app">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">资产概览</h1>
+  </div>
+
+  <!-- 搜索栏 -->
+  <div class="card p-4 mb-6">
+    <div class="flex flex-col sm:flex-row gap-3">
+      <div class="flex-1 relative">
+        <svg class="absolute left-3 top-2.5 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <input type="text" id="searchInput" oninput="doSearch()" placeholder="搜索资产编号、品牌、型号、序列号、使用人..." class="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg text-sm">
+      </div>
+      <select id="statusFilter" onchange="doSearch()" class="px-3 py-2 border border-gray-300 rounded-lg text-sm">
+        <option value="">全部状态</option>
+        <option value="在库">在库</option>
+        <option value="已领用">已领用</option>
+      </select>
+      <button onclick="clearSearch()" class="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">清除</button>
+    </div>
+  </div>
+
+  <!-- 统计卡片 -->
+  <div id="statsGrid" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+
+  <!-- 搜索结果/最近资产 -->
+  <div class="card overflow-hidden mb-6">
+    <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+      <h3 class="font-semibold text-gray-700">资产列表</h3>
+      <a href="/assets" class="text-xs text-primary-500 hover:underline">查看全部 →</a>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">资产编号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">类型</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">品牌/型号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">序列号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">状态</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">使用人</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">操作</th>
+          </tr>
+        </thead>
+        <tbody id="assetTableBody"></tbody>
+      </table>
+    </div>
+    <div id="pagination" class="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm"></div>
+  </div>
+
+  <!-- 设备类型分布 -->
+  <div class="card p-5">
+    <h3 class="font-semibold text-gray-700 mb-3">设备类型分布</h3>
+    <div id="typeDistribution" class="space-y-3"></div>
+  </div>
+</div>
+
+
+<!-- 快速录入弹窗 -->
+<div id="quickAddModal" class="modal-overlay" onclick="if(event.target===this)closeQuickAdd()" style="display:none">
+  <div class="modal-content max-w-2xl">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-lg font-bold text-gray-900">📦 快速录资产</h3>
+      <button onclick="closeQuickAdd()" class="text-gray-500 hover:text-gray-700 text-xl leading-none">&times;</button>
+    </div>
+    <div class="relative" style="min-height:300px">
+      <button onclick="toggleSmartPaste()" id="smartPasteBtn" class="text-xs font-normal bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded float-right">📋 智能粘贴</button>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div><label class="block text-xs text-gray-500 mb-1">资产编号</label><input type="text" id="qa_asset_tag" placeholder="留空自动生成" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">类型</label>
+          <select id="qa_type" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></select>
+        </div>
+        <div><label class="block text-xs text-gray-500 mb-1">品牌</label>
+          <select id="qa_brand" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></select>
+        </div>
+        <div><label class="block text-xs text-gray-500 mb-1">型号</label><input type="text" id="qa_model" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div class="col-span-2"><label class="block text-xs text-gray-500 mb-1">序列号</label><input type="text" id="qa_serial" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">CPU</label><input type="text" id="qa_cpu" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">内存</label><input type="text" id="qa_memory" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">硬盘</label><input type="text" id="qa_disk" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">供应商</label><input type="text" id="qa_supplier" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">使用人</label>
+          <div class="relative" id="qa_user_wrapper">
+            <input type="text" id="qa_current_user_input" oninput="filterUsersQA()" onfocus="filterUsersQA()" onblur="setTimeout(()=>{document.getElementById('qa_user_dropdown')?.classList.add('hidden')},200)" placeholder="搜索使用人..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" autocomplete="off">
+            <select id="qa_current_user" class="hidden"><option value=""></option></select>
+            <div id="qa_user_dropdown" class="absolute z-10 top-full left-0 right-0 bg-white border border-gray-300 rounded-lg mt-1 max-h-40 overflow-y-auto hidden shadow-lg"></div>
+          </div>
+        </div>
+        <div><label class="block text-xs text-gray-500 mb-1">位置</label>
+          <select id="qa_location" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></select>
+        </div>
+        <div class="col-span-2"><label class="block text-xs text-gray-500 mb-1">备注</label><input type="text" id="qa_notes" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      </div>
+      <div class="mt-4 flex gap-2 justify-end">
+        <button onclick="closeQuickAdd()" class="px-4 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">取消</button>
+        <button onclick="quickAddAsset()" class="px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-medium hover:bg-primary-600">保存</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script>
+let qaCurrentSelection = null;
+let qaTimer = null;
+let qaSearchTerm = '';
+
+function doSearch() {
+  const q = document.getElementById('searchInput').value.trim();
+  const status = document.getElementById('statusFilter').value;
+  let url = '/api/assets';
+  const params = [];
+  if (q) params.push('q=' + encodeURIComponent(q));
+  if (status) params.push('status=' + encodeURIComponent(status));
+  if (params.length > 0) url += '?' + params.join('&');
+  fetch(url).then(r => r.json()).then(d => {
+    const assets = d.assets || d || [];
+    const tbody = document.getElementById('assetTableBody');
+    tbody.innerHTML = assets.map(a =>
+      '<tr class="border-b border-gray-100 hover:bg-gray-50">' +
+      '<td class="px-4 py-3"><a href="/asset/' + a.id + '" class="text-primary-500 hover:underline font-medium">' + escHtml(a.asset_tag || '') + '</a></td>' +
+      '<td class="px-4 py-3 text-gray-600">' + escHtml(a.type || '') + '</td>' +
+      '<td class="px-4 py-3 text-gray-600">' + escHtml((a.brand || '') + ' ' + (a.model || '')) + '</td>' +
+      '<td class="px-4 py-3 text-gray-500 text-xs font-mono">' + escHtml(a.serial || '-') + '</td>' +
+      '<td class="px-4 py-3"><span class="status-badge status-' + (a.status === '在库' ? 'in' : a.status === '已领用' ? 'out' : 'scrapped') + '">' + escHtml(a.status || '') + '</span></td>' +
+      '<td class="px-4 py-3 text-gray-600">' + escHtml(a.current_user || '') + '</td>' +
+      '<td class="px-4 py-3 text-right"><a href="/asset/' + a.id + '" class="text-primary-500 hover:underline text-xs">详情</a></td>' +
+      '</tr>'
+    ).join('');
+    // Pagination
+    const pg = document.getElementById('pagination');
+    if (d.total) {
+      const total = d.total;
+      const perPage = d.per_page || 20;
+      const page = d.page || 1;
+      const last = Math.ceil(total / perPage);
+      pg.innerHTML = '<span class="text-gray-500">共 ' + total + ' 条</span><div class="flex gap-1">' +
+        '<button onclick="goPage(' + (page - 1) + ')" class="px-2 py-1 border rounded text-xs ' + (page <= 1 ? 'text-gray-300' : 'hover:bg-gray-50') + '"' + (page <= 1 ? ' disabled' : '') + '>上一页</button>' +
+        '<span class="px-2 py-1 text-xs text-gray-500">' + page + '/' + last + '</span>' +
+        '<button onclick="goPage(' + (page + 1) + ')" class="px-2 py-1 border rounded text-xs ' + (page >= last ? 'text-gray-300' : 'hover:bg-gray-50') + '"' + (page >= last ? ' disabled' : '') + '>下一页</button></div>';
+    } else {
+      pg.innerHTML = '<span class="text-gray-500">共 ' + assets.length + ' 条</span>';
+    }
+    loadStats();
+    loadTypeDistribution();
+  });
+}
+
+function goPage(p) {
+  if (p < 1) return;
+  const q = document.getElementById('searchInput').value.trim();
+  const status = document.getElementById('statusFilter').value;
+  let url = '/api/assets?page=' + p;
+  if (q) url += '&q=' + encodeURIComponent(q);
+  if (status) url += '&status=' + encodeURIComponent(status);
+  fetch(url).then(r => r.json()).then(d => {
+    const assets = d.assets || d || [];
+    const tbody = document.getElementById('assetTableBody');
+    tbody.innerHTML = assets.map(a =>
+      '<tr class="border-b border-gray-100 hover:bg-gray-50">' +
+      '<td class="px-4 py-3"><a href="/asset/' + a.id + '" class="text-primary-500 hover:underline font-medium">' + escHtml(a.asset_tag || '') + '</a></td>' +
+      '<td class="px-4 py-3 text-gray-600">' + escHtml(a.type || '') + '</td>' +
+      '<td class="px-4 py-3 text-gray-600">' + escHtml((a.brand || '') + ' ' + (a.model || '')) + '</td>' +
+      '<td class="px-4 py-3 text-gray-500 text-xs font-mono">' + escHtml(a.serial || '-') + '</td>' +
+      '<td class="px-4 py-3"><span class="status-badge status-' + (a.status === '在库' ? 'in' : a.status === '已领用' ? 'out' : 'scrapped') + '">' + escHtml(a.status || '') + '</span></td>' +
+      '<td class="px-4 py-3 text-gray-600">' + escHtml(a.current_user || '') + '</td>' +
+      '<td class="px-4 py-3 text-right"><a href="/asset/' + a.id + '" class="text-primary-500 hover:underline text-xs">详情</a></td>' +
+      '</tr>'
+    ).join('');
+    loadStats();
+    loadTypeDistribution();
+  });
+}
+
+function loadStats() {
+  Promise.all([
+    fetch('/api/assets').then(r => r.json()),
+    fetch('/api/scrapped').then(r => r.json()),
+  ]).then(([d, s]) => {
+    const assets = d.assets || d || [];
+    const scrappedData = s.assets || [];
+    const total = assets.length;
+    const inStock = assets.filter(a => a.status === '在库').length;
+    const checkedOut = assets.filter(a => a.status === '已领用').length;
+    const scrapped = scrappedData.length;
+    document.getElementById('statsGrid').innerHTML =
+      '<div class="card p-4 text-center"><div class="text-2xl font-bold text-gray-800">' + total + '</div><div class="text-xs text-gray-500 mt-1">总资产</div></div>' +
+      '<div class="card p-4 text-center"><div class="text-2xl font-bold text-green-600">' + inStock + '</div><div class="text-xs text-gray-500 mt-1">在库</div></div>' +
+      '<div class="card p-4 text-center"><div class="text-2xl font-bold text-primary-600">' + checkedOut + '</div><div class="text-xs text-gray-500 mt-1">已领用</div></div>' +
+      '<div class="card p-4 text-center"><div class="text-2xl font-bold text-red-500">' + scrapped + '</div><div class="text-xs text-gray-500 mt-1">已报废</div></div>';
+  });
+}
+
+function loadTypeDistribution() {
+  fetch('/api/assets').then(r => r.json()).then(d => {
+    const assets = d.assets || d || [];
+    const types = {};
+    assets.forEach(a => { if (a.type) types[a.type] = (types[a.type] || 0) + 1; });
+    const total = assets.length;
+    const sorted = Object.entries(types).sort((a,b) => b[1] - a[1]);
+    document.getElementById('typeDistribution').innerHTML = sorted.map(([type, count]) =>
+      '<div><div class="flex justify-between text-sm mb-1"><span class="text-gray-700">' + escHtml(type) + '</span><span class="text-gray-500 font-medium">' + count + '</span></div>' +
+      '<div class="w-full bg-gray-100 rounded-full h-2"><div class="bg-primary-400 h-2 rounded-full" style="width:' + (count/total*100) + '%"></div></div></div>'
+    ).join('');
+  });
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('statusFilter').value = '';
+  doSearch();
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Initial load
+document.addEventListener('DOMContentLoaded', function() {
+  doSearch();
+  loadQuickAddOptions();
+});
+
+
+function showQuickAdd() {
+  document.getElementById('quickAddModal').style.display = 'flex';
+  loadQuickAddOptions();
+}
+
+function closeQuickAdd() {
+  document.getElementById('quickAddModal').style.display = 'none';
+  clearQAForm();
+}
+
+function clearQAForm() {
+  document.getElementById('qa_asset_tag').value = '';
+  document.getElementById('qa_model').value = '';
+  document.getElementById('qa_serial').value = '';
+  document.getElementById('qa_cpu').value = '';
+  document.getElementById('qa_memory').value = '';
+  document.getElementById('qa_disk').value = '';
+  document.getElementById('qa_supplier').value = '';
+  document.getElementById('qa_notes').value = '';
+  document.getElementById('qa_current_user_input').value = '';
+  document.getElementById('qa_current_user').value = '';
+  qaCurrentSelection = null;
+}
+
+function loadQuickAddOptions() {
+  fetch('/api/field-presets?field_key=type')
+    .then(r=>r.json()).then(d => {
+      const sel = document.getElementById('qa_type');
+      sel.innerHTML = '<option value="">选择类型</option>' + d.map(p => '<option value="' + p.field_value + '">' + p.field_value + '</option>').join('');
+    });
+  fetch('/api/field-presets?field_key=brand')
+    .then(r=>r.json()).then(d => {
+      const sel = document.getElementById('qa_brand');
+      sel.innerHTML = '<option value="">选择品牌</option>' + d.map(p => '<option value="' + p.field_value + '">' + p.field_value + '</option>').join('');
+    });
+  fetch('/api/field-presets?field_key=location')
+    .then(r=>r.json()).then(d => {
+      const sel = document.getElementById('qa_location');
+      sel.innerHTML = '<option value=""></option>' + d.map(p => '<option value="' + p.field_value + '">' + p.field_value + '</option>').join('');
+    });
+}
+
+function filterUsersQA() {
+  const input = document.getElementById('qa_current_user_input');
+  const dropdown = document.getElementById('qa_user_dropdown');
+  const q = input.value.trim().toLowerCase();
+  fetch('/api/users?q=' + encodeURIComponent(q))
+    .then(r=>r.json()).then(d => {
+      const users = d.users || d || [];
+      dropdown.innerHTML = users.map(u =>
+        '<div class="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm" onclick="selectUserQA(\'' + u.name.replace(/'/g, "\\'") + '\')">' + u.name + '</div>'
+      ).join('');
+      dropdown.classList.remove('hidden');
+    });
+}
+
+function selectUserQA(name) {
+  document.getElementById('qa_current_user_input').value = name;
+  document.getElementById('qa_current_user').value = name;
+  document.getElementById('qa_user_dropdown').classList.add('hidden');
+}
+
+function quickAddAsset() {
+  const currentUser = document.getElementById('qa_current_user').value || document.getElementById('qa_current_user_input').value;
+  const asset = {
+    asset_tag: document.getElementById('qa_asset_tag').value,
+    type: document.getElementById('qa_type').value,
+    brand: document.getElementById('qa_brand').value,
+    model: document.getElementById('qa_model').value,
+    serial: document.getElementById('qa_serial').value,
+    cpu: document.getElementById('qa_cpu').value,
+    memory: document.getElementById('qa_memory').value,
+    disk: document.getElementById('qa_disk').value,
+    supplier: document.getElementById('qa_supplier').value,
+    current_user: currentUser,
+    location: document.getElementById('qa_location').value,
+    notes: document.getElementById('qa_notes').value
+  };
+  fetch('/api/assets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(asset)})
+    .then(r=>{
+      if (!r.ok) return r.json().then(e => { alert(e.error || '保存失败'); throw e; });
+      return r.json();
+    }).then(() => {
+      closeQuickAdd();
+      doSearch();
+    }).catch(e => console.error(e));
+}
+
+let smartPasteActive = false;
+function toggleSmartPaste() {
+  smartPasteActive = !smartPasteActive;
+  document.getElementById('smartPasteBtn').style.background = smartPasteActive ? '#dbeafe' : '';
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeQuickAdd();
+  if ((e.ctrlKey || e.metaKey) && e.key === 'v' && smartPasteActive) {
+    setTimeout(handleSmartPaste, 50);
+  }
+});
+
+function handleSmartPaste() {
+  const text = (navigator.clipboard ? '' : '');
+  // pasted text from clipboard will be processed by input event
+}
+
+// 加载类型、品牌等选项
+document.addEventListener('DOMContentLoaded', function() {
+  loadQuickAddOptions();
+});
+</script>
+
+{{end}}

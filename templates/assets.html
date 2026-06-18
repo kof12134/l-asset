@@ -1,0 +1,653 @@
+{{define "content"}}
+<div id="app">
+  <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">资产列表</h1>
+    <button onclick="showAddModal()" class="btn px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">+ 添加资产</button>
+  </div>
+
+  <div class="card p-4 mb-6">
+    <div class="flex flex-col sm:flex-row gap-3">
+      <input type="text" id="searchInput" oninput="loadAssets(1)" placeholder="搜索资产编号/品牌/型号/序列号/使用人..." class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm">
+      <select id="statusFilter" onchange="loadAssets(1)" class="px-3 py-2 border border-gray-300 rounded-lg text-sm">
+        <option value="">全部状态</option>
+        <option value="在库">在库</option>
+        <option value="已领用">已领用</option>
+      </select>
+      <select id="typeFilter" onchange="loadAssets(1)" class="px-3 py-2 border border-gray-300 rounded-lg text-sm">
+        <option value="">全部类型</option>
+        <option value="笔记本">笔记本</option>
+        <option value="台式机">台式机</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- 批量操作工具栏 -->
+  <div id="batchBar" class="hidden mb-3 flex items-center gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+    <label class="flex items-center gap-2 cursor-pointer">
+      <input type="checkbox" id="selectAllCheck" onchange="toggleSelectAll()" class="w-4 h-4 text-blue-600 rounded">
+      <span class="text-blue-700 font-medium">全选</span>
+    </label>
+    <span class="text-blue-600" id="selectedCount">已选 0 项</span>
+    <div class="flex gap-2 ml-auto">
+      <button onclick="batchCheckout()" class="px-3 py-1.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-xs font-medium">批量领用</button>
+      <button onclick="batchCheckin()" class="px-3 py-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 text-xs font-medium">批量归还</button>
+      <button onclick="batchScrap()" class="px-3 py-1.5 bg-red-400 text-white rounded-lg hover:bg-red-500 text-xs font-medium">批量报废</button>
+      <button onclick="batchPrintLabel()" class="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-xs font-medium">🖨️ 打印标签</button>
+      <button onclick="showBatchDelete()" class="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 text-xs font-medium">批量删除</button>
+    </div>
+  </div>
+
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="px-4 py-3 w-10"></th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">资产编号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">类型</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">品牌/型号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">序列号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">状态</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">使用人</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">操作</th>
+          </tr>
+        </thead>
+        <tbody id="assetTableBody"></tbody>
+      </table>
+    </div>
+    <div id="pagination" class="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm"></div>
+  </div>
+</div>
+
+<!-- 批量报废弹窗 -->
+<div id="batchScrapModal" class="modal-overlay" onclick="if(event.target===this)closeBatchScrapModal()">
+  <div class="modal-content" style="max-width:28rem">
+    <h2 class="text-lg font-bold text-red-600 mb-4">⚠️ 批量报废确认</h2>
+    <p class="text-sm text-gray-500 mb-4" id="batchScrapInfo"></p>
+    <div class="mb-3">
+      <label class="block text-xs text-gray-500 mb-1">报废原因</label>
+      <select id="batchScrapReason" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+        <option value="损坏">损坏</option>
+        <option value="被盗">被盗</option>
+        <option value="淘汰">淘汰</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div class="mb-4">
+      <label class="block text-xs text-gray-500 mb-1">备注（可选）</label>
+      <textarea id="batchScrapNotes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></textarea>
+    </div>
+    <div class="flex justify-end gap-3">
+      <button onclick="closeBatchScrapModal()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+      <button onclick="doBatchScrap()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm font-medium">确认报废</button>
+    </div>
+  </div>
+</div>
+
+<!-- 批量领用弹窗 -->
+<div id="batchCheckoutModal" class="modal-overlay" onclick="if(event.target===this)closeBatchCheckout()">
+  <div class="modal-content" style="max-width:28rem">
+    <h2 class="text-lg font-bold mb-4">批量领用</h2>
+    <p class="text-sm text-gray-500 mb-4" id="batchCheckoutInfo"></p>
+    <div class="relative mb-4">
+      <input type="text" id="batchCheckoutUserInput" oninput="filterBatchUsers()" onfocus="filterBatchUsers()" onblur="setTimeout(()=>{document.getElementById('batchUserDropdown')?.classList.add('hidden')},200)" placeholder="搜索领用人..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" autocomplete="off">
+      <input type="hidden" id="batchCheckoutUser" value="">
+      <div id="batchUserDropdown" class="hidden absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto text-sm"></div>
+    </div>
+    <div class="flex justify-end gap-3">
+      <button onclick="closeBatchCheckout()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+      <button onclick="doBatchCheckout()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm font-medium">确认领用</button>
+    </div>
+  </div>
+</div>
+
+<!-- 批量删除确认弹窗 -->
+<div id="batchDeleteModal" class="modal-overlay" onclick="if(event.target===this)closeBatchDelete()">
+  <div class="modal-content" style="max-width:28rem">
+    <h2 class="text-lg font-bold mb-4 text-red-600">⚠️ 批量删除确认</h2>
+    <p class="text-sm text-gray-600 mb-2" id="batchDeleteInfo"></p>
+    <p class="text-sm text-red-500 mb-4">此操作不可撤销！请输入 <strong>确认删除</strong> 来确认：</p>
+    <input type="text" id="batchDeleteConfirm" placeholder="请输入 确认删除" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-4" onkeydown="if(event.key==='Enter')doBatchDelete()">
+    <div class="flex justify-end gap-3">
+      <button onclick="closeBatchDelete()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+      <button onclick="doBatchDelete()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm font-medium">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 添加资产弹窗 -->
+<div id="addModal" class="modal-overlay" onclick="if(event.target===this)closeAddModal()">
+  <div class="modal-content">
+    <h2 class="text-lg font-bold mb-4">添加资产
+      <button onclick="toggleAfSmartPaste()" id="afSmartPasteBtn" class="text-xs font-normal bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded float-right">📋 智能粘贴</button>
+    </h2>
+    <div id="afSmartPasteArea" class="hidden mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+      <p class="text-xs text-blue-600 mb-2">粘贴设备信息文字，自动提取有效数据：</p>
+      <textarea id="afSmartPasteInput" rows="4" class="w-full px-3 py-2 border border-blue-300 rounded-lg text-sm mb-2" placeholder="例：ThinkPad X1 Carbon Gen 11 / SN:PF-123456 / i7-1365U / 16GB / 512GB SSD"></textarea>
+      <button onclick="parseAfSmartPaste()" class="px-3 py-1.5 bg-blue-500 text-white text-xs rounded-lg hover:bg-blue-600">🔍 解析填入</button>
+      <button onclick="toggleAfSmartPaste()" class="ml-2 px-3 py-1.5 border border-gray-300 text-xs rounded-lg hover:bg-gray-50">收起</button>
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="block text-xs text-gray-500 mb-1">资产编号</label><input type="text" id="af_asset_tag" placeholder="留空自动生成" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">类型</label>
+        <select id="af_type" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"><option value="">选择类型</option></select>
+      </div>
+      <div><label class="block text-xs text-gray-500 mb-1">品牌</label>
+        <select id="af_brand" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"><option value="">选择品牌</option></select>
+      </div>
+      <div><label class="block text-xs text-gray-500 mb-1">型号</label><input type="text" id="af_model" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div class="col-span-2"><label class="block text-xs text-gray-500 mb-1">序列号</label><input type="text" id="af_serial" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">CPU</label><input type="text" id="af_cpu" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">内存</label><input type="text" id="af_memory" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">硬盘</label><input type="text" id="af_disk" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">使用人</label>
+        <div class="relative">
+          <input type="text" id="af_current_user_input" oninput="filterUsers()" onfocus="filterUsers()" onblur="setTimeout(()=>{document.getElementById('af_user_dropdown')?.classList.add('hidden')},200)" placeholder="搜索使用人..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" autocomplete="off">
+          <select id="af_current_user" class="hidden"><option value=""></option></select>
+          <div id="af_user_dropdown" class="hidden absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto text-sm"></div>
+        </div></div>
+      <div><label class="block text-xs text-gray-500 mb-1">位置</label>
+        <select id="af_location" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"><option value="">选择位置</option></select>
+      </div>
+      <div><label class="block text-xs text-gray-500 mb-1">采购日期</label><input type="date" id="af_purchase_date" onchange="calcWarrantyEnd()" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">采购价格</label><input type="number" step="0.01" id="af_purchase_price" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">供应商</label><input type="text" id="af_supplier" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+      <div><label class="block text-xs text-gray-500 mb-1">保修年限</label>
+        <select id="af_warranty_years" onchange="calcWarrantyEnd()" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"><option value="">选择年限</option><option value="0">无保修</option></select>
+        <input type="hidden" id="af_warranty_end">
+        <p id="af_warranty_hint" class="text-xs text-gray-400 mt-1"></p>
+      </div>
+      <div><label class="block text-xs text-gray-500 mb-1">状态</label>
+        <select id="af_status" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"><option value="">选择状态</option></select>
+      </div>
+      <div class="col-span-2"><label class="block text-xs text-gray-500 mb-1">备注</label><textarea id="af_notes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></textarea></div>
+    </div>
+    <div class="flex justify-end gap-3 mt-5">
+      <button onclick="closeAddModal()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+      <button onclick="addAsset()" class="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">添加</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentPage = 1, totalPages = 1, totalAssets = 0, pageSize = 20;
+let presetsCache = null, af_users = [], batchUsers = [];
+const selectedIds = new Set();
+
+// ── Presets ──
+function calcWarrantyEnd() {
+  var pDate = document.getElementById('af_purchase_date').value;
+  var years = parseInt(document.getElementById('af_warranty_years').value);
+  var hint = document.getElementById('af_warranty_hint');
+  var hiddenEnd = document.getElementById('af_warranty_end');
+  if (!pDate || !years || years <= 0) {
+    hint.textContent = '';
+    hiddenEnd.value = '';
+    return;
+  }
+  var d = new Date(pDate);
+  d.setFullYear(d.getFullYear() + years);
+  var endStr = d.toISOString().split('T')[0];
+  hiddenEnd.value = endStr;
+  hint.textContent = '保修至 ' + endStr;
+}
+
+function loadPresets() {
+  if (presetsCache) { fillSelectPresets(presetsCache); return; }
+  fetch('/api/default-fields').then(r=>r.json()).then(d => {
+    presetsCache = d;
+    fillSelectPresets(d);
+  });
+}
+function fillSelectPresets(fields) {
+  fillSelect('af_type', (fields.find(f=>f.key==='type')||{}).presets||[]);
+  fillSelect('af_brand', (fields.find(f=>f.key==='brand')||{}).presets||[]);
+  fillSelect('af_status', (fields.find(f=>f.key==='status')||{}).presets||[], '选择状态');
+  fillSelect('af_location', (fields.find(f=>f.key==='location')||{}).presets||[], '选择位置');
+  fillSelect('af_warranty_years', (fields.find(f=>f.key==='warranty_years')||{}).presets||[], '选择年限');
+}
+
+// ── User search (add modal) ──
+function loadUsersForSelect() {
+  fetch('/api/users').then(r=>r.json()).then(users => { af_users = users; });
+}
+
+// ── Smart Paste für添加资产弹窗 ──
+function toggleAfSmartPaste() {
+  var area = document.getElementById('afSmartPasteArea');
+  var btn = document.getElementById('afSmartPasteBtn');
+  area.classList.toggle('hidden');
+  btn.textContent = area.classList.contains('hidden') ? '📋 智能粘贴' : '✕ 收起';
+  if (!area.classList.contains('hidden')) document.getElementById('afSmartPasteInput').focus();
+}
+
+function parseAfSmartPaste() {
+  var text = document.getElementById('afSmartPasteInput').value.trim();
+  if (!text) return;
+  var r = smartParse(text);
+  var fm = {brand:'af_brand',model:'af_model',serial:'af_serial',cpu:'af_cpu',memory:'af_memory',disk:'af_disk',notes:'af_notes',supplier:'af_supplier',purchase_price:'af_purchase_price',purchase_date:'af_purchase_date'};
+  for (var k in r) {
+    var el = document.getElementById(fm[k]);
+    if (el) {
+      if (el.tagName==='SELECT') setSelectValue(el.id, r[k]);
+      else el.value = r[k];
+    }
+  }
+  document.getElementById('afSmartPasteArea').classList.add('hidden');
+  document.getElementById('afSmartPasteBtn').textContent = '📋 智能粘贴';
+  // 触发保修计算
+  if (r.purchase_date) { var pe = document.getElementById('af_purchase_date'); if (pe) pe.value = r.purchase_date; }
+  calcWarrantyEnd();
+}
+
+// ── 智能解析核心（同时被首页录资产和列表页添加资产共用） ──
+function filterUsers() {
+  const q = (document.getElementById('af_current_user_input').value||'').toLowerCase();
+  const dd = document.getElementById('af_user_dropdown');
+  if (!dd) return;
+  const m = q ? af_users.filter(u=>u.name.toLowerCase().includes(q)||(u.department||'').toLowerCase().includes(q)) : af_users;
+  dd.classList.remove('hidden');
+  dd.innerHTML = m.length ? m.map(u=>'<div class="px-3 py-2 cursor-pointer hover:bg-primary-50 text-sm" onmousedown="selectUser(\''+u.name.replace(/'/g,"\\'")+'\')"><span class="font-medium">'+u.name+'</span>'+(u.department?'<span class="text-gray-400 ml-2 text-xs">'+u.department+'</span>':'')+'</div>').join('') : '<div class="px-3 py-2 text-gray-400 text-xs">无匹配</div>';
+}
+function selectUser(name) {
+  document.getElementById('af_current_user_input').value = name;
+  document.getElementById('af_current_user').value = name;
+  document.getElementById('af_user_dropdown').classList.add('hidden');
+}
+function fillSelect(id, options, placeholder) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">'+(placeholder||'选择'+id.replace('af_',''))+'</option>' + options.map(v=>'<option value="'+v+'">'+v+'</option>').join('');
+}
+
+// ── Load assets ──
+function loadAssets(page) {
+  currentPage = page || 1;
+  const search = document.getElementById('searchInput').value;
+  const status = document.getElementById('statusFilter').value;
+  const type = document.getElementById('typeFilter').value;
+  const params = new URLSearchParams({page: currentPage, pageSize: pageSize});
+  if (search) params.set('search', search);
+  if (status) params.set('status', status);
+  if (type) params.set('type', type);
+
+  fetch('/api/assets?'+params).then(r=>r.json()).then(d => {
+    totalPages = d.totalPages;
+    totalAssets = d.total;
+    window._frates = d.finance || null;
+
+    // Remove IDs that are no longer on this page from selection
+    const pageIds = new Set(d.assets.map(a=>a.id));
+    for (const id of selectedIds) { if (!pageIds.has(id)) selectedIds.delete(id); }
+
+    const tbody = document.getElementById('assetTableBody');
+    if (d.assets.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-12 text-center text-gray-400">暂无资产数据</td></tr>';
+    } else {
+      const kw = (document.getElementById('searchInput').value || '').trim();
+      tbody.innerHTML = d.assets.map(a => {
+        const cls = 'status-badge status-' + a.status;
+        const sel = selectedIds.has(a.id) ? ' checked' : '';
+        return '<tr class="border-b border-gray-100 hover:bg-gray-50">' +
+          '<td class="px-4 py-3"><input type="checkbox" class="asset-check w-4 h-4 text-blue-600 rounded" value="'+a.id+'" onchange="toggleSelect('+a.id+')"'+sel+'></td>' +
+          '<td class="px-4 py-3 font-medium"><a href="/asset/'+a.id+'" class="text-primary-600 hover:underline">'+hl(a.asset_tag, kw)+'</a></td>' +
+          '<td class="px-4 py-3">'+hl(a.type||'', kw)+'</td>' +
+          '<td class="px-4 py-3">'+hl((a.brand||'')+' '+(a.model||''), kw)+'</td>' +
+          '<td class="px-4 py-3 text-gray-500 text-xs">'+hl(a.serial||'', kw)+'</td>' +
+          '<td class="px-4 py-3"><span class="'+cls+'">'+escHtml(a.status)+'</span></td>' +
+          '<td class="px-4 py-3">'+hl(a.current_user||'-', kw)+'</td>' +
+          '<td class="px-4 py-3 text-right">' +
+            (a.purchase_price ? '<span class="text-xs text-gray-400 mr-2">¥'+parseFloat(a.purchase_price).toFixed(0)+'</span>' : '') +
+            '<a href="/asset/'+a.id+'" class="text-primary-500 hover:text-primary-700 text-xs font-medium">详情</a> <button onclick="cloneAsset('+a.id+')" class="text-gray-400 hover:text-gray-600 text-xs font-medium ml-2" title="克隆此资产">克隆</button></td></tr>';
+      }).join('');
+    }
+
+    // Update batch bar
+    updateBatchBar();
+
+    // Pagination
+    document.getElementById('pagination').innerHTML =
+      '<div class="flex items-center gap-3">' +
+      '<label class="text-xs text-gray-400">每页</label>' +
+      '<select onchange="changePageSize(this.value)" class="px-2 py-1 border border-gray-300 rounded text-xs">' +
+        '<option value="20"'+(pageSize===20?' selected':'')+'>20</option>' +
+        '<option value="50"'+(pageSize===50?' selected':'')+'>50</option>' +
+        '<option value="100"'+(pageSize===100?' selected':'')+'>100</option>' +
+        '<option value="200"'+(pageSize===200?' selected':'')+'>200</option>' +
+      '</select>' +
+      '<span class="text-xs text-gray-500">共 '+totalAssets+' 项 / '+totalPages+' 页</span>' +
+    '</div><div class="flex gap-2 items-center">' +
+      '<span class="text-xs text-gray-400">' + ((currentPage-1)*pageSize+1) + '-' + Math.min(currentPage*pageSize, totalAssets) + '</span>' +
+      (currentPage > 1 ? '<button onclick="loadAssets('+(currentPage-1)+')\" class="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm">上一页</button>' : '') +
+      (currentPage < totalPages ? '<button onclick="loadAssets('+(currentPage+1)+')\" class="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm">下一页</button>' : '') +
+    '</div>';
+    document.getElementById('selectAllCheck').checked = false;
+    syncURL();
+  });
+}
+
+
+function hl(text, kw) {
+  if (!kw || !text) return escHtml(text);
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('(' + escaped + ')', 'gi');
+  return escHtml(text).replace(re, '<mark class="bg-yellow-200 px-0.5 rounded">$1</mark>');
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function changePageSize(val) { pageSize = parseInt(val); loadAssets(1); }
+
+// ── Selection ──
+function toggleSelect(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  updateBatchBar();
+}
+function toggleSelectAll() {
+  const checked = document.getElementById('selectAllCheck').checked;
+  document.querySelectorAll('.asset-check').forEach(cb => {
+    cb.checked = checked;
+    const id = parseInt(cb.value);
+    if (checked) selectedIds.add(id);
+    else selectedIds.delete(id);
+  });
+  updateBatchBar();
+}
+function updateBatchBar() {
+  const bar = document.getElementById('batchBar');
+  const count = selectedIds.size;
+  document.getElementById('selectedCount').textContent = '已选 ' + count + ' 项';
+  if (count > 0) bar.classList.remove('hidden');
+  else bar.classList.add('hidden');
+}
+
+// ── Batch actions ──
+function batchCheckout() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  document.getElementById('batchCheckoutInfo').textContent = '即将领用 ' + ids.length + ' 项资产，请选择领用人：';
+  document.getElementById('batchCheckoutUserInput').value = '';
+  document.getElementById('batchCheckoutUser').value = '';
+  fetch('/api/users').then(r=>r.json()).then(users => {
+    batchUsers = users;
+    document.getElementById('batchCheckoutModal').classList.add('active');
+  });
+}
+function closeBatchCheckout() { document.getElementById('batchCheckoutModal').classList.remove('active'); }
+
+function filterBatchUsers() {
+  const q = (document.getElementById('batchCheckoutUserInput').value||'').trim().toLowerCase();
+  const dd = document.getElementById('batchUserDropdown');
+  if (!dd) return;
+  const m = q ? batchUsers.filter(u=>u.name.toLowerCase().includes(q)||(u.department||'').toLowerCase().includes(q)) : batchUsers;
+  dd.classList.remove('hidden');
+  dd.innerHTML = m.length ? m.map(u=>'<div class="px-3 py-2 cursor-pointer hover:bg-primary-50 text-sm" onmousedown="document.getElementById(\'batchCheckoutUserInput\').value=\''+u.name.replace(/'/g,"\\'")+'\';document.getElementById(\'batchCheckoutUser\').value=\''+u.name.replace(/'/g,"\\'")+'\';document.getElementById(\'batchUserDropdown\').classList.add(\'hidden\')"><span class="font-medium">'+u.name+'</span>'+(u.department?'<span class="text-gray-400 ml-2 text-xs">'+u.department+'</span>':'')+'</div>').join('') : '<div class="px-3 py-2 text-gray-400 text-xs">无匹配</div>';
+}
+
+function doBatchCheckout() {
+  const user = document.getElementById('batchCheckoutUser').value;
+  if (!user) { alert('请选择领用人'); return; }
+  const ids = [...selectedIds];
+  fetch('/api/assets/batch/checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, target_user: user})})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') {
+      selectedIds.clear();
+      closeBatchCheckout();
+      loadAssets(currentPage);
+    } else { alert('操作失败: '+(d.error||'未知错误')); }
+  });
+}
+
+function batchCheckin() {
+  const ids = [...selectedIds];
+  if (!ids.length || !confirm('确认归还选中的 ' + ids.length + ' 项资产？')) return;
+  fetch('/api/assets/batch/checkin', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids})})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') { selectedIds.clear(); loadAssets(currentPage); }
+    else { alert('操作失败: '+(d.error||'未知错误')); }
+  });
+}
+
+function batchScrap() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  document.getElementById('batchScrapInfo').textContent = '即将报废 ' + ids.length + ' 项资产：';
+  document.getElementById('batchScrapReason').value = '损坏';
+  document.getElementById('batchScrapNotes').value = '';
+  document.getElementById('batchScrapModal').classList.add('active');
+}
+
+function closeBatchScrapModal() {
+  document.getElementById('batchScrapModal').classList.remove('active');
+}
+
+function doBatchScrap() {
+  const ids = [...selectedIds];
+  const reason = document.getElementById('batchScrapReason').value;
+  const notes = document.getElementById('batchScrapNotes').value;
+  fetch('/api/assets/batch/scrap', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, reason: reason, notes: notes})})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') { selectedIds.clear(); closeBatchScrapModal(); loadAssets(currentPage); }
+    else { alert('操作失败: '+(d.error||'未知错误')); }
+  });
+}
+
+// ── Batch delete ──
+function showBatchDelete() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  document.getElementById('batchDeleteInfo').textContent = '即将永久删除 ' + ids.length + ' 项资产（资产记录、操作记录将一并清除）：';
+  document.getElementById('batchDeleteConfirm').value = '';
+  document.getElementById('batchDeleteModal').classList.add('active');
+  setTimeout(() => document.getElementById('batchDeleteConfirm').focus(), 100);
+}
+function closeBatchDelete() { document.getElementById('batchDeleteModal').classList.remove('active'); }
+function doBatchDelete() {
+  const input = document.getElementById('batchDeleteConfirm').value.trim();
+  if (input !== '确认删除') {
+    alert('请输入 确认删除 来确认此操作');
+    return;
+  }
+  const ids = [...selectedIds];
+  fetch('/api/assets/batch-delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids: ids, confirm: input})})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') {
+      selectedIds.clear();
+      closeBatchDelete();
+      loadAssets(currentPage);
+    } else { alert('操作失败: '+(d.error||'未知错误')); }
+  });
+}
+
+// ── Clone asset ──
+function cloneAsset(id) {
+  fetch('/api/assets/'+id).then(r=>r.json()).then(a => {
+    loadPresets();
+    loadUsersForSelect();
+    // Wait for presets to load, then fill form
+    setTimeout(() => {
+      document.getElementById('af_asset_tag').value = ''; // clear tag, auto-generate
+      setSelectValue('af_type', a.type || '');
+      setSelectValue('af_brand', a.brand || '');
+      document.getElementById('af_model').value = a.model || '';
+      document.getElementById('af_serial').value = a.serial || '';
+      document.getElementById('af_cpu').value = a.cpu || '';
+      document.getElementById('af_memory').value = a.memory || '';
+      document.getElementById('af_disk').value = a.disk || '';
+      setSelectValue('af_status', '在库'); // always default to 在库
+      document.getElementById('af_purchase_date').value = a.purchase_date || '';
+      document.getElementById('af_purchase_price').value = a.purchase_price || '';
+      document.getElementById('af_supplier').value = a.supplier || '';
+      document.getElementById('af_warranty_end').value = a.warranty_end || '';
+      document.getElementById('af_current_user_input').value = '';
+      document.getElementById('af_current_user').value = '';
+      document.getElementById('af_location').value = a.location || '';
+      document.getElementById('af_notes').value = a.notes || '';
+      document.getElementById('addModal').classList.add('active');
+    }, 200);
+  });
+}
+
+function setSelectValue(id, val) {
+  const sel = document.getElementById(id);
+  if (!sel) return;
+  for (let i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === val) { sel.selectedIndex = i; break; }
+  }
+}
+
+// ── Add asset modal ──
+function showAddModal() { loadPresets(); loadUsersForSelect(); document.getElementById('addModal').classList.add('active'); }
+function closeAddModal() { document.getElementById('addModal').classList.remove('active'); }
+
+function addAsset() {
+  const currentUser = document.getElementById('af_current_user').value || document.getElementById('af_current_user_input').value;
+  const data = {
+    asset_tag: document.getElementById('af_asset_tag').value,
+    type: document.getElementById('af_type').value,
+    brand: document.getElementById('af_brand').value,
+    model: document.getElementById('af_model').value,
+    serial: document.getElementById('af_serial').value,
+    cpu: document.getElementById('af_cpu').value,
+    memory: document.getElementById('af_memory').value,
+    disk: document.getElementById('af_disk').value,
+    current_user: currentUser,
+    location: document.getElementById('af_location').value,
+    purchase_date: document.getElementById('af_purchase_date').value,
+    purchase_price: parseFloat(document.getElementById('af_purchase_price').value) || 0,
+    supplier: document.getElementById('af_supplier').value,
+    warranty_end: document.getElementById('af_warranty_end').value,
+    status: document.getElementById('af_status').value,
+    notes: document.getElementById('af_notes').value,
+  };
+  fetch('/api/assets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)})
+  .then(r=>r.json()).then(() => {
+    closeAddModal();
+    loadAssets(1);
+    document.querySelectorAll('#addModal input, #addModal textarea, #addModal select').forEach(el => {
+      if (el.tagName === 'SELECT') el.selectedIndex = 0;
+      else el.value = '';
+    });
+  }).catch(e => alert('添加失败: '+e));
+}
+
+function syncURL() {
+  const params = new URLSearchParams();
+  const search = document.getElementById('searchInput').value;
+  const st = document.getElementById('statusFilter').value;
+  const tp = document.getElementById('typeFilter').value;
+  if (search) params.set('q', search);
+  if (st) params.set('status', st);
+  if (tp) params.set('type', tp);
+  if (pageSize !== 20) params.set('pageSize', pageSize);
+  if (currentPage > 1) params.set('page', currentPage);
+  const qs = params.toString();
+  window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+}
+
+function loadFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('q')) document.getElementById('searchInput').value = params.get('q');
+  if (params.has('status')) document.getElementById('statusFilter').value = params.get('status');
+  if (params.has('type')) document.getElementById('typeFilter').value = params.get('type');
+  if (params.has('pageSize')) pageSize = parseInt(params.get('pageSize'));
+  const page = params.has('page') ? parseInt(params.get('page')) : 1;
+  loadAssets(page);
+}
+
+document.addEventListener('DOMContentLoaded', loadFromURL);
+
+// ═══ Print labels ═══
+function batchPrintLabel() {
+  const ids = [...selectedIds];
+  if (!ids.length) { alert('请先勾选要打印标签的资产'); return; }
+  // Fetch all selected assets
+  Promise.all(ids.map(id =>
+    fetch('/api/assets/'+id).then(r=>r.json()).then(d => d.asset || d)
+  )).then(assets => {
+    printLabels(assets);
+  });
+}
+
+function printLabels(assets) {
+  if (!assets || !assets.length) return;
+  const w = window.open('', '_blank', 'width=400,height=600');
+  if (!w) { alert('请允许弹出窗口'); return; }
+
+  let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>';
+  html += '@page { margin: 5mm; size: A4; }';
+  html += 'body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; margin: 0; padding: 0; background: #f5f5f5; }';
+  html += '.label-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 4mm; padding: 5mm; }';
+  html += '.label { width: 86mm; min-height: 54mm; padding: 4mm 5mm; border: 2px solid #333; border-radius: 4mm; background: white; page-break-inside: avoid; display: flex; flex-direction: column; position: relative; }';
+  html += '.label-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; padding-bottom: 2mm; margin-bottom: 2mm; }';
+  html += '.label-brand { font-size: 9pt; color: #888; font-weight: bold; letter-spacing: 1px; }';
+  html += '.label-tag { font-size: 20pt; font-weight: 900; color: #1a1a1a; letter-spacing: 1px; }';
+  html += '.label-body { flex: 1; padding: 1.5mm 0; }';
+  html += '.label-row { display: flex; justify-content: space-between; font-size: 8.5pt; color: #444; line-height: 1.6; }';
+  html += '.label-row .key { color: #999; min-width: 28mm; }';
+  html += '.label-row .val { font-weight: 500; text-align: right; }';
+  html += '.label-footer { border-top: 1px dashed #ccc; padding-top: 1.5mm; margin-top: auto; display: flex; align-items: center; gap: 3mm; }';
+  html += '.label-qr { font-family: "Lucida Console", monospace; font-size: 6.5pt; color: #666; letter-spacing: 0.5px; max-width: 50mm; overflow: hidden; white-space: nowrap; }';
+  
+  html += '@media print {';
+  html += '  body { background: white; }';
+  html += '  .no-print { display: none !important; }';
+  html += '  .label { border: 2px solid #333; box-shadow: none; page-break-inside: avoid; }';
+  html += '  .label-container { gap: 3mm; padding: 3mm; }';
+  html += '}';
+  html += '</style><script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script></head><body>';
+  html += '<div class="no-print" style="text-align:center;padding:10px"><button onclick="window.print()" style="padding:8px 24px;font-size:16px;cursor:pointer">🖨️ 打印</button></div>';
+  html += '<div class="label-page">';
+
+  assets.forEach(a => {
+    const url = window.location.origin + '/asset/' + a.id;
+    let org = '';
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/settings', false);
+    xhr.withCredentials = true;
+    xhr.send();
+    if (xhr.status === 200) {
+      const d = JSON.parse(xhr.responseText);
+      if (d.company_name) org = d.company_name;
+    }
+  } catch(e) {}
+    const today = '';
+    html += '<div class="label">';
+    html += '<div class="label-header">';
+    html += '<span class="label-brand">' + escHtml(org) + '</span>';
+    html += '<span class="label-tag">' + escHtml(a.asset_tag || '') + '</span>';
+    html += '</div>';
+    html += '<div class="label-body">';
+    html += '<div class="label-row"><span class="key">设备名称</span><span class="val">' + escHtml(a.type||'') + ' · ' + escHtml((a.brand||'') + ' ' + (a.model||'')) + '</span></div>';
+    html += '<div class="label-row"><span class="key">设备类型</span><span class="val">' + escHtml(a.type||'') + '</span></div>';
+    html += '<div class="label-row"><span class="key">序列号</span><span class="val">' + escHtml(a.serial||'-') + '</span></div>';
+    if (a.current_user) html += '<div class="label-row"><span class="key">使用人</span><span class="val">' + escHtml(a.current_user) + '</span></div>';
+    
+    html += '</div>';
+    html += '<div class="label-footer">';
+    html += '<div id="qr-' + a.id + '" style="width:22mm;height:22mm;margin:0 auto;"></div>';
+    html += '</div>';
+    html += '</div>';
+  });
+
+  html += '</div>';
+  html += '<script>';
+  html += 'setTimeout(function(){';
+  html += '  document.querySelectorAll("[id^=qr-]").forEach(function(el) {';
+  html += '    var id = el.id.replace("qr-","");';
+  html += '    var url = window.location.origin + "/asset/" + id;';
+  html += '    new QRCode(el, { text: url, width: 90, height: 90, colorDark: "#222222", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });';
+  html += '  });';
+  html += '}, 100);';
+  html += '<\/script>';
+  html += '</body></html>';
+  w.document.write(html);
+  w.document.close();
+}
+</script>
+{{end}}

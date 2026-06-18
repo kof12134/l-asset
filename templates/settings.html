@@ -1,0 +1,382 @@
+{{define "content"}}
+<div id="settingsApp">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">设置</h1>
+  </div>
+
+  <!-- 企业名称设置 -->
+  <div class="card p-6 mb-4">
+    <h3 class="font-semibold text-gray-700 mb-4">企业配置</h3>
+    <div class="space-y-3 max-w-md">
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">企业名称（用于资产编号前缀）</label>
+        <input type="text" id="companyName" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="例如：PC、LENOVO、公司拼音">
+        <p class="text-xs text-gray-400 mt-1">留空则使用默认值 "PC"，资产编号格式：企业名称-序号</p>
+      </div>
+      <button onclick="saveCompanyName()" class="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">保存</button>
+      <span id="saveMsg" class="text-sm text-green-600 hidden ml-2">已保存</span>
+    </div>
+  </div>
+
+  <!-- 财务配置 -->
+  <div class="card p-6 mb-4">
+    <h3 class="font-semibold text-gray-700 mb-4">💰 财务配置</h3>
+    <div class="space-y-4 max-w-lg">
+      <!-- 税率 -->
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">税率（%）</label>
+        <div class="flex items-center gap-2">
+          <input type="number" id="taxRate" class="w-24 px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="0" min="0" max="100" step="0.1">
+          <span class="text-xs text-gray-400">%</span>
+          <p class="text-xs text-gray-400 ml-2">设置为 0 则不计算税前价格，常见税率：13%、9%、6%</p>
+        </div>
+      </div>
+      <!-- 基准货币 -->
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">基准货币</label>
+        <input type="text" id="baseCurrency" class="w-24 px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="RMB" value="RMB">
+        <p class="text-xs text-gray-400 mt-1">采购价格默认以该货币记录</p>
+      </div>
+      <!-- 汇率表 -->
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">汇率换算表</label>
+        <p class="text-xs text-gray-400 mb-2">添加其他货币，设置 1 单位基准货币 = ? 单位外币</p>
+        <div id="rateList" class="space-y-2">
+          <div class="flex items-center gap-2 text-xs text-gray-400 font-medium">
+            <span class="w-24">货币代码</span>
+            <span class="w-28">汇率（1 {{.BaseCurrency}} = ?）</span>
+            <span class="w-8"></span>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 mt-2">
+          <input type="text" id="newCurrencyCode" class="w-24 px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="USD" maxlength="10">
+          <input type="number" id="newCurrencyRate" class="w-28 px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="汇率" step="0.0001" min="0">
+          <button onclick="addCurrencyRate()" class="px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 text-sm font-medium">添加</button>
+        </div>
+      </div>
+      <!-- 保存按钮 -->
+      <div class="pt-2">
+        <button onclick="saveFinanceConfig()" class="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">保存财务配置</button>
+        <span id="financeSaveMsg" class="text-sm text-green-600 hidden ml-2">已保存</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 修改管理员密码 -->
+  <div class="card p-6 mb-4">
+    <h3 class="font-semibold text-gray-700 mb-4">修改管理员密码</h3>
+    <div class="space-y-3 max-w-md" id="adminPwdForm">
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">当前密码</label>
+        <input type="password" id="oldPwd" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">新密码</label>
+        <input type="password" id="newPwd" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">确认新密码</label>
+        <input type="password" id="confirmPwd" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+      </div>
+      <button onclick="changeAdminPwd()" class="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">修改密码</button>
+      <span id="pwdMsg" class="text-sm hidden ml-2"></span>
+    </div>
+  </div>
+
+  <!-- 系统备份 -->
+  <div class="card p-6 mb-4">
+    <h3 class="font-semibold text-gray-700 mb-4">系统备份</h3>
+    <p class="text-sm text-gray-500 mb-4">导出或导入完整的系统配置和数据，用于换设备或备份恢复。</p>
+
+    <div class="flex flex-wrap gap-4">
+      <!-- ZIP 打包导出（推荐） -->
+      <div class="border border-primary-200 bg-primary-50 rounded-xl p-4 flex-1 min-w-[250px]">
+        <div class="flex items-center gap-2 mb-2">
+          <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5h2a2 2 0 012 2h6m-6 0l-2-2m2 2l-2 2m0 0l2 2m-2-2H3"/></svg>
+          <h4 class="font-medium text-gray-700 text-sm">完整备份（推荐）</h4>
+        </div>
+        <p class="text-xs text-gray-400 mb-3">包含全部数据 + 附件照片/PDF，ZIP 打包下载。</p>
+        <div class="flex items-center gap-2 mb-2">
+          <button onclick="exportBackup()" class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 text-sm font-medium">📦 导出完整备份</button>
+          <button onclick="document.getElementById('zipImportFile').click()" class="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 text-sm font-medium">导入恢复</button>
+          <input type="file" id="zipImportFile" accept=".zip" class="hidden" onchange="importBackup()">
+        </div>
+        <p class="text-xs text-amber-600">⚠️ 导入将清空所有现有数据并替换为备份内容。</p>
+        <div id="zipImportResult" class="mt-2 text-xs hidden"></div>
+      </div>
+
+      <!-- XML 导出（纯数据） -->
+      <div class="border border-gray-200 rounded-xl p-4 flex-1 min-w-[200px]">
+        <div class="flex items-center gap-2 mb-2">
+          <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <h4 class="font-medium text-gray-700 text-sm">仅备份数据（无损附件）</h4>
+        </div>
+        <p class="text-xs text-gray-400 mb-3">仅导出数据库数据（资产/用户/操作记录），<strong>不含附件图片</strong>。</p>
+        <div class="flex gap-2">
+          <a href="/api/system/export-xml" class="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-sm font-medium">导出 XML</a>
+          <div>
+            <input type="file" id="xmlImportFile" accept=".xml" class="hidden" onchange="importXML()">
+            <button onclick="document.getElementById('xmlImportFile').click()" class="px-4 py-2 border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50 text-sm font-medium">导入 XML</button>
+          </div>
+        </div>
+        <div id="xmlImportResult" class="mt-2 text-xs hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card p-6 mb-4">
+    <h3 class="font-semibold text-gray-700 mb-4">数据导出（CSV）</h3>
+    <p class="text-sm text-gray-500 mb-4">导出所有资产数据为 CSV 文件，包含完整信息和自定义字段。</p>
+    <a href="/api/assets/export" class="inline-block px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">下载 CSV 导出</a>
+  </div>
+
+  <div class="card p-6">
+    <h3 class="font-semibold text-gray-700 mb-4">系统信息</h3>
+    <div class="text-sm text-gray-600 space-y-1">
+      <p>应用名称：L-Asset v1.0</p>
+      <p>数据库：SQLite</p>
+      <p>数据文件：data/l-asset.db</p>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  fetch('/api/settings').then(r=>r.json()).then(cfg => {
+    document.getElementById('companyName').value = cfg.company_name || 'PC';
+    document.getElementById('taxRate').value = cfg.tax_rate || 0;
+    document.getElementById('baseCurrency').value = cfg.base_currency || 'RMB';
+    document.getElementById('depreciationMethod').value = cfg.depreciation_method || 'straight-5y';
+    renderExchangeRates(cfg.exchange_rates || {});
+  });
+});
+
+var _fullConfig = null;
+function fetchFullConfig(cb) {
+  if (_fullConfig) { cb(_fullConfig); return; }
+  fetch('/api/settings').then(r=>r.json()).then(cfg => { _fullConfig = cfg; cb(cfg); });
+}
+
+function saveCompanyName() {
+  const val = document.getElementById('companyName').value.trim() || 'PC';
+  fetchFullConfig(function(cfg) {
+    cfg.company_name = val;
+    fetch('/api/settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cfg)})
+    .then(r=>r.json()).then(() => {
+      const msg = document.getElementById('saveMsg');
+      msg.classList.remove('hidden');
+      setTimeout(() => msg.classList.add('hidden'), 2000);
+    }).catch(e => alert('保存失败: '+e));
+  });
+}
+
+function renderExchangeRates(rates) {
+  var html = '<div class="flex items-center gap-2 text-xs text-gray-400 font-medium"><span class="w-24">货币代码</span><span class="w-28">汇率</span><span class="w-8"></span></div>';
+  var count = 0;
+  for (var code in rates) {
+    count++;
+    html += '<div class="flex items-center gap-2" data-code="'+code+'">';
+    html += '<span class="w-24 text-sm font-medium">'+code+'</span>';
+    html += '<span class="w-28 text-sm text-gray-600">1 ' + document.getElementById('baseCurrency').value + ' = ' + rates[code] + ' ' + code + '</span>';
+    html += '<button onclick="removeCurrencyRate(\''+code+'\')" class="text-red-400 hover:text-red-600 text-xs">删除</button>';
+    html += '</div>';
+  }
+  if (count === 0) {
+    html += '<div class="text-xs text-gray-400 py-1">尚未添加汇率</div>';
+  }
+  document.getElementById('rateList').innerHTML = html;
+}
+
+function addCurrencyRate() {
+  var code = document.getElementById('newCurrencyCode').value.trim().toUpperCase();
+  var rate = parseFloat(document.getElementById('newCurrencyRate').value);
+  if (!code) { alert('请输入货币代码'); return; }
+  if (!rate || rate <= 0) { alert('请输入有效的汇率'); return; }
+  fetchFullConfig(function(cfg) {
+    if (!cfg.exchange_rates) cfg.exchange_rates = {};
+    cfg.exchange_rates[code] = rate;
+    _fullConfig = cfg;
+    renderExchangeRates(cfg.exchange_rates);
+    document.getElementById('newCurrencyCode').value = '';
+    document.getElementById('newCurrencyRate').value = '';
+  });
+}
+
+function removeCurrencyRate(code) {
+  fetchFullConfig(function(cfg) {
+    delete cfg.exchange_rates[code];
+    _fullConfig = cfg;
+    renderExchangeRates(cfg.exchange_rates);
+  });
+}
+
+function saveFinanceConfig() {
+  var taxRate = parseFloat(document.getElementById('taxRate').value) || 0;
+  var baseCurrency = document.getElementById('baseCurrency').value.trim() || 'RMB';
+  fetchFullConfig(function(cfg) {
+    cfg.tax_rate = taxRate;
+    cfg.base_currency = baseCurrency;
+    cfg.depreciation_method = document.getElementById('depreciationMethod').value;
+    fetch('/api/settings', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cfg)})
+    .then(r=>r.json()).then(() => {
+      _fullConfig = null; // invalidate cache
+      const msg = document.getElementById('financeSaveMsg');
+      msg.classList.remove('hidden');
+      setTimeout(() => msg.classList.add('hidden'), 2000);
+    }).catch(e => alert('保存失败: '+e));
+  });
+}
+
+function changeAdminPwd() {
+  const oldPwd = document.getElementById('oldPwd').value;
+  const newPwd = document.getElementById('newPwd').value;
+  const confirmPwd = document.getElementById('confirmPwd').value;
+  const msg = document.getElementById('pwdMsg');
+  msg.className = 'text-sm hidden ml-2';
+
+  if (!oldPwd || !newPwd || !confirmPwd) {
+    msg.textContent = '请填写所有密码字段';
+    msg.className = 'text-sm text-red-600 ml-2';
+    msg.classList.remove('hidden');
+    return;
+  }
+  if (newPwd !== confirmPwd) {
+    msg.textContent = '两次输入的新密码不一致';
+    msg.className = 'text-sm text-red-600 ml-2';
+    msg.classList.remove('hidden');
+    return;
+  }
+
+  fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:'admin', password: oldPwd})})
+  .then(r=>r.json()).then(d => {
+    if (d.error) {
+      msg.textContent = '当前密码错误';
+      msg.className = 'text-sm text-red-600 ml-2';
+      msg.classList.remove('hidden');
+      return;
+    }
+    fetch('/api/users/' + d.user.id, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:'admin', role:'admin', active:1, password: newPwd})})
+    .then(r=>r.json()).then(res => {
+      if (res.status === 'ok' || res.id) {
+        msg.textContent = '密码修改成功！请重新登录';
+        msg.className = 'text-sm text-green-600 ml-2';
+        msg.classList.remove('hidden');
+        document.getElementById('oldPwd').value = '';
+        document.getElementById('newPwd').value = '';
+        document.getElementById('confirmPwd').value = '';
+        setTimeout(() => { window.location.href = '/login'; }, 2000);
+      } else {
+        msg.textContent = '修改失败: ' + (res.error || '未知错误');
+        msg.className = 'text-sm text-red-600 ml-2';
+        msg.classList.remove('hidden');
+      }
+    });
+  });
+}
+
+function importXML() {
+  const fileInput = document.getElementById('xmlImportFile');
+  const resultDiv = document.getElementById('xmlImportResult');
+  if (!fileInput.files || !fileInput.files[0]) {
+    resultDiv.className = 'mt-2 text-xs text-red-500';
+    resultDiv.textContent = '请选择 XML 备份文件';
+    resultDiv.classList.remove('hidden');
+    return;
+  }
+
+  if (!confirm('⚠️ 导入将清空所有现有数据并替换为备份内容。确定要继续吗？')) {
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  resultDiv.className = 'mt-2 text-xs text-gray-500';
+  resultDiv.textContent = '导入中，请稍候...';
+  resultDiv.classList.remove('hidden');
+
+  fetch('/api/system/import-xml', { method:'POST', body: fd })
+  .then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      resultDiv.className = 'mt-2 text-xs text-green-600';
+      resultDiv.innerHTML = '✅ 导入成功！资产 ' + d.imported + ' 条，用户 ' + d.users + ' 个，自定义字段 ' + d.fields + ' 条，操作记录 ' + d.transactions + ' 条。<br>页面即将刷新...';
+      setTimeout(() => { window.location.reload(); }, 2500);
+    } else {
+      resultDiv.className = 'mt-2 text-xs text-red-500';
+      resultDiv.textContent = '❌ 导入失败: ' + (d.error || '未知错误');
+    }
+  }).catch(e => {
+    resultDiv.className = 'mt-2 text-xs text-red-500';
+    resultDiv.textContent = '❌ 导入失败: ' + e;
+  });
+}
+
+function exportBackup() {
+  const btn = event.target;
+  btn.textContent = '⏳ 打包中...';
+  btn.disabled = true;
+
+  fetch('/api/system/export-backup', { method:'POST' })
+  .then(r => {
+    if (!r.ok) throw new Error('导出失败');
+    return r.blob();
+  })
+  .then(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'l-asset-backup.zip';
+    a.click();
+    URL.revokeObjectURL(url);
+    document.getElementById('zipImportResult').className = 'mt-2 text-xs text-green-600';
+    document.getElementById('zipImportResult').textContent = '✅ 下载完成！';
+    document.getElementById('zipImportResult').classList.remove('hidden');
+  })
+  .catch(e => {
+    document.getElementById('zipImportResult').className = 'mt-2 text-xs text-red-500';
+    document.getElementById('zipImportResult').textContent = '❌ 导出失败: ' + e;
+    document.getElementById('zipImportResult').classList.remove('hidden');
+  })
+  .finally(() => {
+    btn.textContent = '📦 导出完整备份';
+    btn.disabled = false;
+  });
+}
+
+function importBackup() {
+  const fileInput = document.getElementById('zipImportFile');
+  const resultDiv = document.getElementById('zipImportResult');
+  if (!fileInput.files || !fileInput.files[0]) {
+    resultDiv.className = 'mt-2 text-xs text-red-500';
+    resultDiv.textContent = '请选择 ZIP 备份文件';
+    resultDiv.classList.remove('hidden');
+    return;
+  }
+
+  if (!confirm('⚠️ 导入将清空所有现有数据并替换为备份内容（含附件）。确定要继续吗？')) {
+    fileInput.value = '';
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  resultDiv.className = 'mt-2 text-xs text-gray-500';
+  resultDiv.textContent = '导入中，请稍候...';
+  resultDiv.classList.remove('hidden');
+
+  fetch('/api/system/import-backup', { method:'POST', body: fd })
+  .then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      resultDiv.className = 'mt-2 text-xs text-green-600';
+      resultDiv.innerHTML = '✅ 恢复成功！资产 ' + d.imported + ' 条，用户 ' + d.users + ' 个，自定义字段 ' + d.fields + ' 条，附件 ' + d.attachments + ' 个，操作记录 ' + d.transactions + ' 条。<br>页面即将刷新...';
+      setTimeout(() => { window.location.reload(); }, 2500);
+    } else {
+      resultDiv.className = 'mt-2 text-xs text-red-500';
+      resultDiv.textContent = '❌ 恢复失败: ' + (d.error || '未知错误');
+    }
+  }).catch(e => {
+    resultDiv.className = 'mt-2 text-xs text-red-500';
+    resultDiv.textContent = '❌ 恢复失败: ' + e;
+  });
+}
+</script>
+{{end}}

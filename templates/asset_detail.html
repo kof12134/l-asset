@@ -1,0 +1,670 @@
+{{define "content"}}
+<div id="app">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/assets" class="text-gray-400 hover:text-gray-600">&larr; 返回列表</a>
+    <h1 class="text-2xl font-bold text-gray-900" id="assetTitle">加载中...</h1>
+    <span id="assetStatusBadge"></span>
+    <div class="ml-auto flex gap-2">
+      <button onclick="toggleEdit()" id="editToggleBtn" class="px-4 py-2 border border-primary-500 text-primary-600 rounded-lg hover:bg-primary-50 text-sm font-medium flex items-center gap-1">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+        编辑
+      </button>
+      <button onclick="deleteAsset()" class="px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium">删除</button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Left: Main info + custom fields -->
+    <div class="lg:col-span-2 space-y-6">
+      <div class="card p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold text-gray-700">基本信息</h3>
+          <span id="saveHint" class="text-xs text-green-600 hidden">已保存</span>
+        </div>
+        <div id="basicFields" class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm"></div>
+        <div id="financeFields" class="mt-3 pt-3 border-t border-gray-100 hidden"></div>
+        <div id="assetNotesWrap" class="mt-4 hidden"></div>
+        <div id="saveBar" class="hidden mt-6 pt-4 border-t border-gray-200 flex justify-end gap-3">
+          <button onclick="cancelEdit()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+          <button onclick="saveEdit()" class="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+            保存修改
+          </button>
+        </div>
+      </div>
+
+      <div id="customFieldsCard" class="card p-6 hidden">
+        <h3 class="font-semibold text-gray-700 mb-4">自定义字段</h3>
+        <div id="cfFields" class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm"></div>
+      </div>
+
+      <div id="attachmentsCard" class="card p-6 hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-semibold text-gray-700">附件 / 照片</h3>
+          <label class="cursor-pointer px-3 py-1.5 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-xs font-medium inline-flex items-center gap-1">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            上传
+            <input type="file" id="attachmentUpload" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,application/pdf" onchange="uploadAttachment()" class="hidden">
+          </label>
+        </div>
+        <div id="attachmentsList" class="space-y-2"></div>
+      </div>
+
+      <div id="transactionsCard" class="card p-6 hidden">
+        <h3 class="font-semibold text-gray-700 mb-4">操作记录</h3>
+        <div id="transactionsList" class="space-y-2"></div>
+      </div>
+    </div>
+
+    <!-- Right: Actions sidebar -->
+    <div class="space-y-4">
+      <div class="card p-5">
+        <h3 class="font-semibold text-gray-700 mb-3">操作</h3>
+        <div id="actionArea"></div>
+        <button onclick="printLabelSingle()" class="mt-3 w-full py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-sm font-medium">🖨️ 打印标签</button>
+      </div>
+      <div class="card p-5">
+        <h3 class="font-semibold text-gray-700 mb-3">资产信息</h3>
+        <div class="text-xs text-gray-400 space-y-1">
+          <p>创建：<span id="infoCreated"></span></p>
+          <p>更新：<span id="infoUpdated"></span></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 报废弹窗 -->
+<div id="scrapModal" class="modal-overlay" onclick="if(event.target===this)closeScrapModal()">
+  <div class="modal-content" style="max-width:28rem">
+    <h2 class="text-lg font-bold text-red-600 mb-4">⚠️ 报废资产</h2>
+    <p class="text-sm text-gray-500 mb-4">即将报废此资产，此操作将资产移至报废列表。</p>
+    <div class="mb-3">
+      <label class="block text-xs text-gray-500 mb-1">报废原因</label>
+      <select id="scrapReason" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+        <option value="损坏">损坏</option>
+        <option value="被盗">被盗</option>
+        <option value="淘汰">淘汰</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div class="mb-4">
+      <label class="block text-xs text-gray-500 mb-1">备注（可选）</label>
+      <textarea id="scrapNotes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" placeholder="报废原因说明..."></textarea>
+    </div>
+    <div class="flex justify-end gap-3">
+      <button onclick="closeScrapModal()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+      <button onclick="doScrapAsset()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm font-medium">确认报废</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const assetId = parseInt(window.location.pathname.split('/').pop());
+let asset = {}, assetBackup = {}, customFields = [], defaultFieldPresets = {};
+let isEditing = false;
+
+// ═══ Field definition (what to show in edit mode) ═══
+const BASIC_FIELDS = [
+  ['asset_tag',   '资产编号', 'text'],
+  ['type',        '类型',     'select', 'type'],
+  ['brand',       '品牌',     'select', 'brand'],
+  ['model',       '型号',     'text'],
+  ['serial',      '序列号',   'text'],
+  ['cpu',         'CPU',      'text'],
+  ['memory',      '内存',     'text'],
+  ['disk',        '硬盘',     'text'],
+  ['status',      '状态',     'status_readonly'],
+  ['purchase_date','采购日期','date'],
+  ['purchase_price','采购价格','number'],
+  ['supplier',    '供应商',   'text'],
+  ['warranty_end','保修到期', 'date'],
+  ['current_user','使用人',   'user'],
+  ['location',    '位置',     'select','location'],
+];
+
+var _financeRates = null; // cached
+function getFinanceRates(cb) {
+  if (_financeRates) { cb(_financeRates); return; }
+  fetch('/api/settings').then(r=>r.json()).then(cfg => {
+    _financeRates = { tax_rate: cfg.tax_rate || 0, base_currency: cfg.base_currency || 'RMB', exchange_rates: cfg.exchange_rates || {} };
+    cb(_financeRates);
+  });
+}
+
+function renderFinance(price, rates) {
+  var el = document.getElementById('financeFields');
+  if (!price || price == 0 || !rates) {
+    el.className = 'mt-3 pt-3 border-t border-gray-100 hidden';
+    return;
+  }
+  
+  var bc = rates.base_currency || 'RMB';
+  var incTax = parseFloat(price);
+  var exTax = incTax;
+  if (rates.tax_rate > 0) exTax = incTax / (1 + rates.tax_rate / 100);
+  
+  var h = '<div class="text-xs font-semibold text-gray-500 mb-2">💰 财务信息</div>';
+  h += '<div class="space-y-1.5">';
+  
+  // 含税价
+  h += '<div class="flex justify-between"><span class="text-gray-400">含税价</span><span class="font-semibold">' + bc + ' ' + incTax.toFixed(2) + '</span></div>';
+  
+  // 不含税价（税率 > 0 时才显示）
+  if (rates.tax_rate > 0) {
+    h += '<div class="flex justify-between"><span class="text-gray-400">不含税价（税率 ' + rates.tax_rate + '%）</span><span>' + bc + ' ' + exTax.toFixed(2) + '</span></div>';
+  }
+  
+  // 外币换算
+  if (rates.exchange_rates) {
+    for (var code in rates.exchange_rates) {
+      var rate = rates.exchange_rates[code];
+      var convInc = incTax * rate;
+      var convEx = exTax * rate;
+      h += '<div class="flex justify-between"><span class="text-gray-400">' + code + '</span><span><span class="font-semibold">' + convInc.toFixed(2) + '</span> <span class="text-gray-400">含税</span> / <span class="font-semibold">' + convEx.toFixed(2) + '</span> <span class="text-gray-400">不含税</span></span></div>';
+    }
+  }
+  
+  h += '</div>';
+  el.innerHTML = h;
+  el.className = 'mt-3 pt-3 border-t border-gray-100';
+}
+
+function init() {
+  fetch('/api/assets/'+assetId).then(r=>r.json()).then(d => {
+    asset = d.asset || d;  // support new format {asset, finance} or old format
+    assetBackup = JSON.parse(JSON.stringify(asset));
+    window._frates = d.finance || { tax_rate: 0, base_currency: 'RMB', exchange_rates: {} };
+    _financeRates = window._frates;
+
+    // Load presets
+    return fetch('/api/default-fields').then(r=>r.json()).then(df => {
+      const presets = {};
+      df.forEach(f => { if (f.type === 'select' && f.presets) presets[f.key] = f.presets; });
+      defaultFieldPresets = presets;
+
+      // Load custom field definitions
+      return fetch('/api/fields').then(r=>r.json()).then(cf => {
+        customFields = cf;
+        renderViewMode();
+        renderActions();
+        renderTransactions();
+        renderMeta();
+        renderCustomFields();
+        renderAttachments();
+      });
+    });
+  });
+}
+
+// ═══ Render: View mode ═══
+function renderViewMode() {
+  document.getElementById('assetTitle').textContent = asset.asset_tag;
+  const badge = document.getElementById('assetStatusBadge');
+  badge.className = 'status-badge status-' + asset.status;
+  badge.textContent = asset.status;
+
+  const html = BASIC_FIELDS.map(f => {
+    const key = f[0];
+    let val = asset[key];
+    val = val || '-';
+    return '<div><span class="text-gray-400 text-xs">'+f[1]+'</span><p class="font-medium text-sm">'+escapeHtml(val)+'</p></div>';
+  }).join('');
+  document.getElementById('basicFields').innerHTML = html;
+  renderFinance(parseFloat(asset.purchase_price), window._frates);
+
+  // Notes
+  const nw = document.getElementById('assetNotesWrap');
+  if (asset.notes) {
+    nw.className = 'mt-4';
+    nw.innerHTML = '<span class="text-gray-400 text-xs">备注</span><p class="text-sm mt-1">'+escapeHtml(asset.notes)+'</p>';
+  } else {
+    nw.className = 'mt-4 hidden';
+  }
+
+  document.getElementById('editToggleBtn').innerHTML =
+    '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg> 编辑';
+  document.getElementById('saveBar').classList.add('hidden');
+  isEditing = false;
+  document.getElementById('saveHint').classList.add('hidden');
+}
+
+// ═══ Render: Edit mode (toggle) ═══
+function toggleEdit() {
+  if (isEditing) { cancelEdit(); return; }
+  isEditing = true;
+  document.getElementById('editToggleBtn').innerHTML =
+    '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg> 取消编辑';
+
+  let html = '';
+  BASIC_FIELDS.forEach(f => {
+    const key = f[0], label = f[1], type = f[2], presetKey = f[3];
+    const val = asset[key] || '';
+    html += '<div><label class="block text-xs text-gray-500 mb-1">'+label+'</label>';
+
+    if (type === 'user') {
+      // User search
+      html += '<div class="relative">';
+      html += '<input type="text" id="ef_'+key+'_input" placeholder="搜索使用人..." value="'+escapeAttr(val)+'" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" autocomplete="off" oninput="filterEditUsers()" onfocus="filterEditUsers()" onblur="setTimeout(()=>{document.getElementById(\'ef_user_dropdown\')?.classList.add(\'hidden\')},200)">';
+      html += '<select id="ef_'+key+'" class="hidden"><option value="'+escapeAttr(val)+'"></option></select>';
+      html += '<div id="ef_user_dropdown" class="hidden absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto text-sm"></div>';
+      html += '</div>';
+    } else if (type === 'status_readonly') {
+      html += '<span class="inline-block px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg">'+escapeHtml(val)+'</span>';
+      html += '<input type="hidden" id="ef_'+key+'" value="'+escapeAttr(val)+'">';
+    } else if (type === 'select' && presetKey && defaultFieldPresets[presetKey]) {
+      html += '<select id="ef_'+key+'" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">';
+      html += '<option value="">-</option>';
+      defaultFieldPresets[presetKey].forEach(o => {
+        html += '<option value="'+escapeAttr(o)+'"'+(val===o?' selected':'')+'>'+escapeHtml(o)+'</option>';
+      });
+      html += '</select>';
+    } else if (type === 'date') {
+      html += '<input type="date" id="ef_'+key+'" value="'+escapeAttr(val)+'" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">';
+    } else if (type === 'number') {
+      html += '<input type="number" step="0.01" id="ef_'+key+'" value="'+escapeAttr(val)+'" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">';
+    } else {
+      html += '<input type="text" id="ef_'+key+'" value="'+escapeAttr(val)+'" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">';
+    }
+    html += '</div>';
+  });
+
+  // Notes
+  html += '<div class="col-span-2"><label class="block text-xs text-gray-500 mb-1">备注</label>';
+  html += '<textarea id="ef_notes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">'+escapeAttr(asset.notes||'')+'</textarea></div>';
+
+  document.getElementById('basicFields').innerHTML = html;
+  document.getElementById('saveBar').classList.remove('hidden');
+  document.getElementById('assetNotesWrap').classList.add('hidden');
+
+  // Load users for the user field
+  loadEditUsers();
+
+  // Custom fields in edit mode
+  renderCustomFieldsEdit();
+}
+
+function cancelEdit() {
+  asset = JSON.parse(JSON.stringify(assetBackup));
+  renderViewMode();
+  renderCustomFields();
+  renderActions();
+}
+
+// ═══ User search helpers (edit mode) ═══
+let editUsers = [];
+
+function loadEditUsers() {
+  const input = document.getElementById('ef_current_user_input');
+  if (input) input.value = asset.current_user || '';
+  fetch('/api/users').then(r=>r.json()).then(users => {
+    editUsers = users;
+  });
+}
+
+function filterEditUsers() {
+  const q = (document.getElementById('ef_current_user_input').value || '').trim().toLowerCase();
+  const dropdown = document.getElementById('ef_user_dropdown');
+  if (!dropdown) return;
+  const matched = q ? editUsers.filter(u => u.name.toLowerCase().includes(q) || (u.department||'').toLowerCase().includes(q)) : editUsers;
+  dropdown.classList.remove('hidden');
+  if (matched.length === 0) {
+    dropdown.innerHTML = '<div class="px-3 py-2 text-gray-400 text-xs">无匹配</div>';
+    return;
+  }
+  dropdown.innerHTML = matched.map(u =>
+    '<div class="px-3 py-2 cursor-pointer hover:bg-primary-50 text-sm" onmousedown="selectEditUser(\'' + u.name.replace(/'/g,"\\'") + '\')">' +
+      '<span class="font-medium">' + u.name + '</span>' +
+      (u.department ? '<span class="text-gray-400 ml-2 text-xs">' + u.department + '</span>' : '') +
+    '</div>'
+  ).join('');
+}
+
+function selectEditUser(name) {
+  document.getElementById('ef_current_user_input').value = name;
+  document.getElementById('ef_current_user').value = name;
+  document.getElementById('ef_user_dropdown').classList.add('hidden');
+}
+
+// ═══ Custom fields ═══
+function renderCustomFields() {
+  const card = document.getElementById('customFieldsCard');
+  if (!asset.custom_values || !asset.custom_values.length || !customFields.length) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  const div = document.getElementById('cfFields');
+  div.innerHTML = asset.custom_values.map(cv => {
+    const name = (customFields.find(f=>f.id===cv.field_id)||{}).field_name || cv.field_name;
+    return '<div><span class="text-gray-400 text-xs">'+name+'</span><p class="font-medium text-sm">'+(cv.field_value||'-')+'</p></div>';
+  }).join('');
+}
+
+// ═══ Attachments ═══
+function renderAttachments() {
+  fetch('/api/attachments/'+assetId).then(r=>r.json()).then(atts => {
+    const card = document.getElementById('attachmentsCard');
+    const list = document.getElementById('attachmentsList');
+    card.classList.remove('hidden');
+    if (!atts || !atts.length) {
+      list.innerHTML = '<p class="text-sm text-gray-400">暂无附件，点击上方按钮上传照片或文件。</p>';
+      return;
+    }
+    list.innerHTML = atts.map(a => {
+      const ext = (a.file_name || '').split('.').pop().toLowerCase();
+      const isImage = ['jpg','jpeg','png','gif','webp','bmp'].includes(ext);
+      const preview = isImage
+        ? '<img src="/uploads/'+a.file_path+'" class="w-16 h-16 object-cover rounded-lg">'
+        : '<div class="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center text-gray-400 text-xs font-medium">.'+ext.toUpperCase()+'</div>';
+      const size = a.file_size > 1048576
+        ? (a.file_size / 1048576).toFixed(1) + ' MB'
+        : (a.file_size / 1024).toFixed(1) + ' KB';
+      return '<div class="flex items-center gap-3 py-2 border-b border-gray-100 last:border-0">' +
+        preview +
+        '<div class="flex-1 min-w-0">' +
+          '<p class="text-sm font-medium truncate">' + escapeHtml(a.file_name) + '</p>' +
+          '<p class="text-xs text-gray-400">' + size + ' · ' + a.created_at + '</p>' +
+        '</div>' +
+        '<div class="flex gap-2">' +
+          '<a href="/uploads/' + a.file_path + '" target="_blank" class="text-primary-500 hover:text-primary-700 text-xs font-medium">查看</a>' +
+          '<button onclick="deleteAttachment(' + a.id + ')" class="text-red-500 hover:text-red-700 text-xs font-medium">删除</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  });
+}
+
+function uploadAttachment() {
+  const input = document.getElementById('attachmentUpload');
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  fetch('/api/attachments/'+assetId, {method:'POST', body: fd})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') {
+      input.value = '';
+      renderAttachments();
+    } else { alert('上传失败: '+(d.error||'未知错误')); }
+  }).catch(e => alert('上传失败: '+e));
+}
+
+function deleteAttachment(id) {
+  if (!confirm('确认删除此附件？')) return;
+  fetch('/api/attachments/'+assetId, {method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id: id})})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') renderAttachments();
+    else alert('删除失败: '+(d.error||'未知错误'));
+  });
+}
+
+function renderCustomFieldsEdit() {
+  const card = document.getElementById('customFieldsCard');
+  const div = document.getElementById('cfFields');
+  if (!customFields.length) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+
+  // Build a map of current values
+  const cvMap = {};
+  if (asset.custom_values) {
+    asset.custom_values.forEach(cv => { cvMap[cv.field_id] = cv.field_value; });
+  }
+
+  let html = '';
+  customFields.forEach(cf => {
+    const val = cvMap[cf.id] || '';
+    html += '<div><label class="block text-xs text-gray-500 mb-1">'+cf.field_name+'</label>';
+    if (cf.field_type === 'select' && cf.field_options) {
+      html += '<select id="ecf_'+cf.id+'" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">';
+      html += '<option value="">-</option>';
+      cf.field_options.split(',').forEach(o => {
+        html += '<option value="'+escapeAttr(o)+'"'+(val===o?' selected':'')+'>'+escapeHtml(o)+'</option>';
+      });
+      html += '</select>';
+    } else if (cf.field_type === 'date') {
+      html += '<input type="date" id="ecf_'+cf.id+'" value="'+escapeAttr(val)+'" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">';
+    } else {
+      html += '<input type="'+cf.field_type+'" id="ecf_'+cf.id+'" value="'+escapeAttr(val)+'" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">';
+    }
+    html += '</div>';
+  });
+  div.innerHTML = html;
+}
+
+// ═══ Save ═══
+function saveEdit() {
+  const data = {};
+  BASIC_FIELDS.forEach(f => {
+    const key = f[0], type = f[2];
+    const el = document.getElementById('ef_'+key);
+    if (el) {
+      if (type === 'user') {
+        data[key] = document.getElementById('ef_'+key+'_input') ? document.getElementById('ef_'+key+'_input').value : el.value;
+      } else if (key === 'purchase_price') {
+        data[key] = parseFloat(el.value) || 0;
+      } else {
+        data[key] = el.value;
+      }
+    }
+  });
+  data.notes = document.getElementById('ef_notes') ? document.getElementById('ef_notes').value : '';
+
+  data.custom_values = customFields.map(cf => {
+    const el = document.getElementById('ecf_'+cf.id);
+    return { field_id: cf.id, field_value: el ? el.value : '' };
+  });
+
+  fetch('/api/assets/'+assetId, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)})
+  .then(r=>r.json()).then(d => {
+    if (d.error) { alert('保存失败: '+d.error); return; }
+    // Reload
+    init();
+    const hint = document.getElementById('saveHint');
+    hint.classList.remove('hidden');
+    setTimeout(() => hint.classList.add('hidden'), 2500);
+  }).catch(e => alert('保存失败: '+e));
+}
+
+// ═══ Actions ═══
+function renderActions() {
+  const act = document.getElementById('actionArea');
+  if (asset.status === '已报废') {
+    act.innerHTML = '<p class="text-sm text-red-500 font-medium mb-3">此资产已报废</p><a href="/scrapped" class="block w-full py-2 text-center border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 text-sm font-medium">查看报废记录</a>';
+    return;
+  }
+  
+  let html = '';
+  if (asset.status === '在库') {
+    html += '<div class="relative mb-2"><input type="text" id="checkoutUserInput" oninput="filterCheckoutUsers()" onfocus="filterCheckoutUsers()" onblur="setTimeout(()=>{document.getElementById(\'checkoutUserDropdown\')?.classList.add(\'hidden\')},200)" placeholder="搜索领用人..." class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" autocomplete="off"><input type="hidden" id="checkoutUser" value=""><div id="checkoutUserDropdown" class="hidden absolute z-10 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto text-sm"></div></div><button onclick="doCheckout()" class="w-full py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm font-medium">领用</button>';
+    fetch('/api/users').then(r=>r.json()).then(users => {
+      window._checkoutUsers = users;
+    });
+  } else if (asset.status === '已领用') {
+    html += '<button onclick="doCheckin()" class="w-full py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 text-sm font-medium">归还</button>';
+  }
+  // Add scrap button for in-库 and checked-out assets
+  html += '<button onclick="showScrapModal()" class="mt-3 w-full py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm font-medium">报废</button>';
+  act.innerHTML = html;
+}
+
+function filterCheckoutUsers() {
+  const q = (document.getElementById('checkoutUserInput').value || '').trim().toLowerCase();
+  const dropdown = document.getElementById('checkoutUserDropdown');
+  if (!dropdown || !window._checkoutUsers) return;
+  const matched = q ? window._checkoutUsers.filter(u => u.name.toLowerCase().includes(q) || (u.department||'').toLowerCase().includes(q)) : window._checkoutUsers;
+  dropdown.classList.remove('hidden');
+  if (matched.length === 0) {
+    dropdown.innerHTML = '<div class="px-3 py-2 text-gray-400 text-xs">无匹配</div>';
+    return;
+  }
+  dropdown.innerHTML = matched.map(u =>
+    '<div class="px-3 py-2 cursor-pointer hover:bg-primary-50 text-sm" onmousedown="document.getElementById(\'checkoutUserInput\').value=\''+u.name.replace(/'/g,"\\'")+'\';document.getElementById(\'checkoutUser\').value=\''+u.name.replace(/'/g,"\\'")+'\';document.getElementById(\'checkoutUserDropdown\').classList.add(\'hidden\')">' +
+      '<span class="font-medium">' + u.name + '</span>' +
+      (u.department ? '<span class="text-gray-400 ml-2 text-xs">' + u.department + '</span>' : '') +
+    '</div>'
+  ).join('');
+}
+
+function doCheckout() {
+  const user = document.getElementById('checkoutUser').value;
+  if (!user) { alert('请选择领用人'); return; }
+  fetch('/api/assets/'+assetId+'/checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target_user:user})})
+  .then(r=>r.json()).then(() => { init(); });
+}
+
+function doCheckin() {
+  fetch('/api/assets/'+assetId+'/checkin', {method:'POST', headers:{'Content-Type':'application/json'}})
+  .then(r=>r.json()).then(() => { init(); });
+}
+
+// ═══ Transactions ═══
+function renderTransactions() {
+  fetch('/api/transactions?pageSize=200').then(r=>r.json()).then(td => {
+    const txs = td.transactions.filter(t => t.asset_id === assetId);
+    const card = document.getElementById('transactionsCard');
+    if (!txs.length) { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    document.getElementById('transactionsList').innerHTML = txs.map(tx => {
+      const cls = tx.action==='checkout'?'bg-blue-100 text-blue-700':tx.action==='checkin'?'bg-green-100 text-green-700':tx.action==='scrap'?'bg-red-100 text-red-700':'bg-gray-100 text-gray-700';
+      const label = tx.action==='checkout'?'领用':tx.action==='checkin'?'归还':tx.action==='scrap'?'报废':tx.action==='create'?'入库':tx.action;
+      return '<div class="flex items-center gap-3 text-sm py-2 border-b border-gray-100 last:border-0"><span class="px-2 py-0.5 rounded text-xs font-medium '+cls+'">'+label+'</span><span>'+tx.operator+'</span>'+(tx.target_user?'<span>→ '+tx.target_user+'</span>':'')+'<span class="text-gray-400 text-xs ml-auto">'+tx.created_at+'</span></div>';
+    }).join('');
+  });
+}
+
+// ═══ Meta ═══
+function renderMeta() {
+  document.getElementById('infoCreated').textContent = asset.created_at || '-';
+  document.getElementById('infoUpdated').textContent = asset.updated_at || '-';
+}
+
+// ═══ Delete ═══
+function deleteAsset() {
+  if (!confirm('确认永久删除此资产？此操作不可撤销。')) return;
+  if (!confirm('再次确认：删除 "' + asset.asset_tag + '" ？')) return;
+  fetch('/api/assets/'+assetId, {method:'DELETE'}).then(() => { location.href = '/assets'; });
+}
+
+// ═══ Utilities ═══
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escapeAttr(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══ Scrap Modal ═══
+function showScrapModal() {
+  document.getElementById('scrapReason').value = '损坏';
+  document.getElementById('scrapNotes').value = '';
+  document.getElementById('scrapModal').classList.add('active');
+}
+function closeScrapModal() { document.getElementById('scrapModal').classList.remove('active'); }
+function doScrapAsset() {
+  const reason = document.getElementById('scrapReason').value;
+  const notes = document.getElementById('scrapNotes').value;
+  if (!confirm('确认报废此资产？')) return;
+  fetch('/api/assets/'+assetId+'/scrap', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason: reason, notes: notes})})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') { closeScrapModal(); init(); }
+    else { alert('操作失败: '+(d.error||'未知错误')); }
+  }).catch(e => alert('操作失败: '+e));
+}
+
+document.addEventListener('DOMContentLoaded', init);
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ═══ Print label ═══
+function printLabelSingle() {
+  printLabels([asset]);
+}
+
+function printLabels(assets) {
+  if (!assets || !assets.length) return;
+  const w = window.open('', '_blank', 'width=400,height=600');
+  if (!w) { alert('请允许弹出窗口'); return; }
+
+  let html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>';
+  html += '@page { margin: 5mm; size: A4; }';
+  html += 'body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; margin: 0; padding: 0; background: #f5f5f5; }';
+  html += '.label-container { display: flex; flex-wrap: wrap; justify-content: center; gap: 4mm; padding: 5mm; }';
+  html += '.label { width: 86mm; min-height: 54mm; padding: 4mm 5mm; border: 2px solid #333; border-radius: 4mm; background: white; page-break-inside: avoid; display: flex; flex-direction: column; position: relative; }';
+  html += '.label-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; padding-bottom: 2mm; margin-bottom: 2mm; }';
+  html += '.label-brand { font-size: 9pt; color: #888; font-weight: bold; letter-spacing: 1px; }';
+  html += '.label-tag { font-size: 20pt; font-weight: 900; color: #1a1a1a; letter-spacing: 1px; }';
+  html += '.label-body { flex: 1; padding: 1.5mm 0; }';
+  html += '.label-row { display: flex; justify-content: space-between; font-size: 8.5pt; color: #444; line-height: 1.6; }';
+  html += '.label-row .key { color: #999; min-width: 28mm; }';
+  html += '.label-row .val { font-weight: 500; text-align: right; }';
+  html += '.label-footer { border-top: 1px dashed #ccc; padding-top: 1.5mm; margin-top: auto; display: flex; align-items: center; gap: 3mm; }';
+  html += '.label-qr { font-family: "Lucida Console", monospace; font-size: 6.5pt; color: #666; letter-spacing: 0.5px; max-width: 50mm; overflow: hidden; white-space: nowrap; }';
+  html += '.label-date { font-size: 7pt; color: #aaa; }';
+  html += '@media print {';
+  html += '  body { background: white; }';
+  html += '  .no-print { display: none !important; }';
+  html += '  .label { border: 2px solid #333; box-shadow: none; page-break-inside: avoid; }';
+  html += '  .label-container { gap: 3mm; padding: 3mm; }';
+  html += '}';
+  html += '</style><script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script></head><body>';
+  html += '<div class="no-print" style="text-align:center;padding:10px"><button onclick="window.print()" style="padding:8px 24px;font-size:16px;cursor:pointer">🖨️ 打印</button></div>';
+  html += '<div class="label-page">';
+
+  assets.forEach(a => {
+    const url = window.location.origin + '/asset/' + a.id;
+    let org = '';
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/settings', false);
+    xhr.withCredentials = true;
+    xhr.send();
+    if (xhr.status === 200) {
+      const d = JSON.parse(xhr.responseText);
+      if (d.company_name) org = d.company_name;
+    }
+  } catch(e) {}
+    const today = new Date().toISOString().slice(0,10);
+    html += '<div class="label">';
+    html += '<div class="label-header">';
+    html += '<span class="label-brand">' + escHtml(org) + '</span>';
+    html += '<span class="label-tag">' + escHtml(a.asset_tag || '') + '</span>';
+    html += '</div>';
+    html += '<div class="label-body">';
+    html += '<div class="label-row"><span class="key">设备名称</span><span class="val">' + escHtml((a.brand||'') + ' ' + (a.model||'')) + '</span></div>';
+    html += '<div class="label-row"><span class="key">设备类型</span><span class="val">' + escHtml(a.type||'') + '</span></div>';
+    html += '<div class="label-row"><span class="key">序列号</span><span class="val">' + escHtml(a.serial||'-') + '</span></div>';
+    if (a.current_user) html += '<div class="label-row"><span class="key">使用人</span><span class="val">' + escHtml(a.current_user) + '</span></div>';
+    
+    html += '</div>';
+    html += '<div class="label-footer">';
+    html += '<div id="qr-' + a.id + '" style="width:22mm;height:22mm;margin:0 auto;"></div>';
+    html += '</div>';
+    html += '</div>';
+  });
+
+  html += '</div>';
+  html += '<script>';
+  html += 'setTimeout(function(){';
+  html += '  document.querySelectorAll("[id^=qr-]").forEach(function(el) {';
+  html += '    var id = el.id.replace("qr-","");';
+  html += '    var url = window.location.origin + "/asset/" + id;';
+  html += '    new QRCode(el, { text: url, width: 90, height: 90, colorDark: "#222222", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });';
+  html += '  });';
+  html += '}, 100);';
+  html += '<\/script>';
+  html += '</body></html>';
+  w.document.write(html);
+  w.document.close();
+}
+</script>
+{{end}}

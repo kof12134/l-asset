@@ -1,0 +1,212 @@
+{{define "content"}}
+<div x-data="fieldsManager">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">字段管理</h1>
+  </div>
+
+  <!-- 默认字段 -->
+  <div class="card overflow-hidden mb-6">
+    <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
+      <h3 class="font-semibold text-gray-700">默认字段</h3>
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="bg-gray-50 border-b border-gray-200">
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">字段名</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">类型</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">预设值</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="f in defaultFields" :key="f.key">
+          <tr class="border-b border-gray-100 hover:bg-gray-50">
+            <td class="px-4 py-3 font-medium" x-text="f.name"></td>
+            <td class="px-4 py-3">
+              <span class="px-2 py-0.5 bg-gray-100 rounded text-xs">
+                <span x-show="f.type === 'text'">文本</span>
+                <span x-show="f.type === 'select'">选项</span>
+                <span x-show="f.type === 'date'">日期</span>
+              </span>
+            </td>
+            <td class="px-4 py-3">
+              <template x-if="f.type === 'select'">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <div class="flex gap-1 flex-wrap">
+                    <template x-for="v in (f.presets || [])" :key="v">
+                      <span class="px-2 py-0.5 bg-primary-50 text-primary-700 rounded text-xs" x-text="v"></span>
+                    </template>
+                    <span x-show="!(f.presets && f.presets.length)" class="text-gray-400 text-xs">暂无预设值</span>
+                  </div>
+                  <button @click="openPresetManager(f.key, f.name)" class="text-primary-500 hover:text-primary-700 text-xs font-medium ml-2 whitespace-nowrap">[管理选项]</button>
+                </div>
+              </template>
+              <span x-show="f.type !== 'select'" class="text-gray-400 text-xs">-</span>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 自定义字段 -->
+  <div class="card overflow-hidden">
+    <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+      <h3 class="font-semibold text-gray-700">自定义字段</h3>
+      <button @click="showAdd=true" class="btn px-3 py-1.5 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-xs font-medium">+ 添加字段</button>
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="bg-gray-50 border-b border-gray-200">
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">字段名</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">类型</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">选项（select）</th>
+          <th class="text-right px-4 py-3 font-semibold text-gray-600">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="f in fields" :key="f.id">
+          <tr class="border-b border-gray-100 hover:bg-gray-50">
+            <td class="px-4 py-3 font-medium" x-text="f.field_name"></td>
+            <td class="px-4 py-3"><span class="px-2 py-0.5 bg-gray-100 rounded text-xs" x-text="f.field_type"></span></td>
+            <td class="px-4 py-3 text-gray-500 text-xs" x-text="f.field_options || '-'"></td>
+            <td class="px-4 py-3 text-right">
+              <button @click="deleteField(f.id)" class="text-red-500 hover:text-red-700 text-xs font-medium">删除</button>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="fields.length === 0">
+          <td colspan="4" class="px-4 py-12 text-center text-gray-400">暂无自定义字段</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 添加自定义字段弹窗 -->
+  <div x-show="showAdd" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" @click.self="showAdd=false">
+    <div class="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+      <h2 class="text-lg font-bold mb-4">添加自定义字段</h2>
+      <div class="space-y-3">
+        <div><label class="block text-xs text-gray-500 mb-1">字段名</label><input type="text" x-model="newField.field_name" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">类型</label>
+          <select x-model="newField.field_type" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+            <option value="text">文本</option>
+            <option value="number">数字</option>
+            <option value="date">日期</option>
+            <option value="select">下拉选择</option>
+          </select>
+        </div>
+        <div x-show="newField.field_type === 'select'">
+          <label class="block text-xs text-gray-500 mb-1">选项（逗号分隔）</label>
+          <input type="text" x-model="newField.field_options" placeholder="选项1,选项2,选项3" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+        </div>
+      </div>
+      <div class="flex justify-end gap-3 mt-5">
+        <button @click="showAdd=false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+        <button @click="addField()" class="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">添加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 预设值管理弹窗 -->
+  <div x-show="showPresets" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" @click.self="showPresets=false">
+    <div class="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+      <h2 class="text-lg font-bold mb-4" x-text="'管理选项 — ' + presetFieldName"></h2>
+      <div class="mb-4">
+        <div class="flex gap-2 mb-3" x-show="presetFieldKey === 'type'">
+          <input type="text" x-model="newPresetAbbr" @keydown.enter="addPreset()" placeholder="缩写" class="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono text-center" maxlength="6">
+          <input type="text" x-model="newPreset" @keydown.enter="addPreset()" placeholder="输入新选项" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm">
+          <button @click="addPreset()" class="px-3 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">添加</button>
+        </div>
+        <div class="flex gap-2 mb-3" x-show="presetFieldKey !== 'type'">
+          <input type="text" x-model="newPreset" @keydown.enter="addPreset()" placeholder="输入新选项" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm">
+          <button @click="addPreset()" class="px-3 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">添加</button>
+        </div>
+        <div class="space-y-1">
+          <template x-for="(p, idx) in presets" :key="p.id">
+            <div class="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg gap-2">
+              <div class="flex items-center gap-2 flex-1">
+                <template x-if="p.abbr !== undefined">
+                  <input type="text" :value="p.abbr" @change="updatePresetAbbr(p.id, p.field_value, $event.target.value)" class="w-14 px-2 py-1 border border-gray-300 rounded text-xs font-mono text-center" placeholder="缩写" maxlength="6">
+                </template>
+                <span class="text-sm" x-text="p.field_value"></span>
+              </div>
+              <button @click="deletePreset(p.id)" class="text-red-500 hover:text-red-700 text-xs font-medium shrink-0">删除</button>
+            </div>
+          </template>
+          <div x-show="presets.length === 0" class="text-center text-gray-400 text-sm py-4">暂无预设值</div>
+        </div>
+      </div>
+      <div class="flex justify-end">
+        <button @click="showPresets=false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('alpine:init', () => {
+  Alpine.data('fieldsManager', () => ({
+    fields: [],
+    defaultFields: [],
+    showAdd: false,
+    newField: { field_name: '', field_type: 'text', field_options: '' },
+    showPresets: false,
+    presetFieldKey: '',
+    presetFieldName: '',
+    presets: [],
+    newPreset: '',
+
+    init() {
+      this.loadFields();
+      this.loadDefaultFields();
+    },
+    loadFields() { fetch('/api/fields').then(r=>r.json()).then(d=>{ this.fields=d }) },
+    loadDefaultFields() { fetch('/api/default-fields').then(r=>r.json()).then(d=>{ this.defaultFields=d }) },
+    addField() {
+      if (!this.newField.field_name) return;
+      fetch('/api/fields', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.newField)})
+      .then(r=>r.json()).then(()=>{
+        this.showAdd = false;
+        this.newField = { field_name: '', field_type: 'text', field_options: '' };
+        this.loadFields();
+      });
+    },
+    deleteField(id) {
+      if (!confirm('确定删除此字段？已填写的值也会被删除。')) return;
+      fetch('/api/fields?id='+id, {method:'DELETE'}).then(()=>this.loadFields());
+    },
+    openPresetManager(fieldKey, fieldName) {
+      this.presetFieldKey = fieldKey;
+      this.presetFieldName = fieldName;
+      this.presets = [];
+      this.newPreset = '';
+      this.newPresetAbbr = '';
+      fetch('/api/field-presets?field_key=' + fieldKey).then(r=>r.json()).then(d=>{
+        this.presets = d;
+        this.showPresets = true;
+      });
+    },
+    addPreset() {
+      if (!this.newPreset.trim()) return;
+      fetch('/api/field-presets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({field_key: this.presetFieldKey, field_value: this.newPreset.trim()})})
+      .then(r=>r.json()).then(()=>{
+        this.newPreset = '';
+        fetch('/api/field-presets?field_key=' + this.presetFieldKey).then(r=>r.json()).then(d=>{ this.presets = d });
+        this.loadDefaultFields();
+      });
+    },
+    updatePresetAbbr(id, val, abbr) {
+      fetch("/api/field-presets", {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id: id, field_value: val, abbr: abbr})}).then(()=>{
+        fetch("/api/field-presets?field_key=" + this.presetFieldKey).then(r=>r.json()).then(d=>{ this.presets = d });
+      });
+    },
+    deletePreset(id) {
+      fetch('/api/field-presets?id=' + id, {method:'DELETE'}).then(()=>{
+        fetch('/api/field-presets?field_key=' + this.presetFieldKey).then(r=>r.json()).then(d=>{ this.presets = d });
+        this.loadDefaultFields();
+      });
+    }
+  }))
+})
+</script>
+{{end}}

@@ -1,0 +1,72 @@
+{{define "content"}}
+<div id="app">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">操作记录</h1>
+  </div>
+
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">时间</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">资产</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">操作</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">操作人</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">目标</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">备注</th>
+          </tr>
+        </thead>
+        <tbody id="txTableBody"></tbody>
+      </table>
+    </div>
+    <div id="txPagination" class="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm"></div>
+  </div>
+</div>
+
+<script>
+let txPage = 1, txPageSize = 50;
+
+function loadTransactions(page, preserveSize) {
+  txPage = page || 1;
+  if (!preserveSize) {
+    const sz = document.getElementById('txPageSize');
+    if (sz) txPageSize = parseInt(sz.value);
+  }
+  fetch('/api/transactions?page='+txPage+'&pageSize='+txPageSize).then(r=>r.json()).then(d => {
+    const tbody = document.getElementById('txTableBody');
+    if (d.transactions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-12 text-center text-gray-400">暂无操作记录</td></tr>';
+    } else {
+      tbody.innerHTML = d.transactions.map(tx => {
+        const cls = tx.action==='checkout'?'bg-blue-100 text-blue-700':tx.action==='checkin'?'bg-green-100 text-green-700':tx.action==='scrap'?'bg-red-100 text-red-700':'bg-gray-100 text-gray-700';
+        const label = tx.action==='checkout'?'领用':tx.action==='checkin'?'归还':tx.action==='scrap'?'报废':tx.action==='create'?'入库':tx.action;
+        return '<tr class="border-b border-gray-100 hover:bg-gray-50"><td class="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">'+tx.created_at+'</td>' +
+          '<td class="px-4 py-3"><a href="/asset/'+tx.asset_id+'" class="text-primary-600 hover:underline">'+(tx.asset_tag||'')+'</a></td>' +
+          '<td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-xs font-medium '+cls+'">'+label+'</span></td>' +
+          '<td class="px-4 py-3">'+tx.operator+'</td>' +
+          '<td class="px-4 py-3">'+(tx.target_user||'-')+'</td>' +
+          '<td class="px-4 py-3 text-gray-500 text-xs">'+(tx.notes||'-')+'</td></tr>';
+      }).join('');
+    }
+    const totalPages = d.totalPages || 1;
+    document.getElementById('txPagination').innerHTML = '<div class="flex items-center gap-3">' +
+      '<label class="text-xs text-gray-400">每页</label>' +
+      '<select id="txPageSize" onchange="loadTransactions(1, true)" class="px-2 py-1 border border-gray-300 rounded text-xs">' +
+        '<option value="20"'+(txPageSize===20?' selected':'')+'>20</option>' +
+        '<option value="50"'+(txPageSize===50?' selected':'')+'>50</option>' +
+        '<option value="100"'+(txPageSize===100?' selected':'')+'>100</option>' +
+        '<option value="200"'+(txPageSize===200?' selected':'')+'>200</option>' +
+      '</select>' +
+      '<span class="text-xs text-gray-500">共 '+d.total+' 条 / '+totalPages+' 页</span>' +
+    '</div><div class="flex gap-2 items-center">' +
+      '<span class="text-xs text-gray-400">' + ((txPage-1)*txPageSize+1) + '-' + Math.min(txPage*txPageSize, d.total) + '</span>' +
+      (txPage > 1 ? '<button onclick="loadTransactions('+(txPage-1)+')" class="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm">上一页</button>' : '') +
+      (txPage < totalPages ? '<button onclick="loadTransactions('+(txPage+1)+')" class="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm">下一页</button>' : '') +
+      '</div>';
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => loadTransactions(1));
+</script>
+{{end}}

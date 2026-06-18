@@ -1,0 +1,74 @@
+{{define "templates/login.html"}}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 - L-Asset</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+var THEMES = {
+  orange: {50:'#fff7ed',100:'#ffedd5',200:'#fed7aa',300:'#fdba74',400:'#fb923c',500:'#f97316',600:'#ea580c',700:'#c2410c',800:'#9a3412',900:'#7c2d12', logo_body:'#fdba74', logo_base:'#fb923c', logo_text:'white'},
+  blue:   {50:'#f0f4ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a', logo_body:'#7dd3fc', logo_base:'#38bdf8', logo_text:'#2563eb'}
+};
+(function(){
+  var saved = localStorage.getItem('lasset_theme') || 'orange';
+  document.documentElement.setAttribute('data-theme', saved);
+})();
+</script>
+<style>
+[data-theme="orange"] { --logo-body: #fdba74; --logo-base: #fb923c; --logo-text: white; }
+[data-theme="blue"] { --logo-body: #7dd3fc; --logo-base: #38bdf8; --logo-text: #2563eb; }
+.fill-logo-body { fill: var(--logo-body); }
+.fill-logo-base { fill: var(--logo-base); }
+.fill-logo-text { fill: var(--logo-text); }
+</style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-slate-50 to-primary-50 flex flex-col items-center justify-center">
+<div class="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm mx-4">
+  <div class="text-center mb-6">
+    <div class="flex items-center justify-center gap-2 mb-1">
+      <svg class="w-9 h-9" viewBox="0 0 32 32" fill="none">
+        <rect x="3" y="8" width="26" height="20" rx="3" class="fill-logo-body"/>
+        <circle cx="8" cy="13" r="1.5" fill="#f9a8d4"/>
+        <circle cx="13" cy="13" r="1.5" fill="#a7f3d0"/>
+        <circle cx="18" cy="13" r="1.5" fill="#fde68a"/>
+        <rect x="22" y="17" width="7" height="5" rx="1" fill="#f9a8d4"/>
+        <line x1="24" y1="19.5" x2="27" y2="19.5" stroke="white" stroke-width="0.8" stroke-linecap="round"/>
+        <line x1="24" y1="20.8" x2="26.5" y2="20.8" stroke="white" stroke-width="0.8" stroke-linecap="round"/>
+        <rect x="8" y="28" width="16" height="2" rx="0.5" class="fill-logo-base"/>
+        <text x="9" y="24" font-family="Arial,sans-serif" font-weight="bold" font-size="11" class="fill-logo-text">L</text>
+      </svg>
+      <div class="text-3xl font-bold text-primary-600">L-Asset</div>
+    </div>
+    <div class="text-sm text-gray-500">资产管理系统</div>
+  </div>
+  <div id="loginError" class="hidden mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700"></div>
+  <div class="space-y-3">
+    <div><input type="text" id="loginName" placeholder="用户名" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" autocomplete="username"></div>
+    <div><input type="password" id="loginPassword" placeholder="密码" class="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-300" autocomplete="current-password"></div>
+    <button onclick="doLogin()" class="w-full py-2.5 bg-primary-500 text-white rounded-lg hover:bg-primary-600 font-medium text-sm transition">登录</button>
+  </div>
+</div>
+<script>
+function doLogin() {
+  const name = document.getElementById('loginName').value.trim();
+  const pwd = document.getElementById('loginPassword').value;
+  if (!name || !pwd) { showError('请输入用户名和密码'); return; }
+  fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name,password:pwd})})
+  .then(r=>r.json().then(d=>({status:r.status, body:d})))
+  .then(({status, body}) => {
+    if (status !== 200) { showError(body.error || '登录失败'); return; }
+    window.location.href = '/';
+  }).catch(() => showError('网络错误'));
+}
+function showError(msg) { const e=document.getElementById('loginError'); e.textContent=msg; e.classList.remove('hidden'); }
+document.addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+</script>
+</div>
+<p class="text-center mt-4 text-xs text-gray-400">
+  L-Asset v1.0 &copy; 2026 乐为爸爸. All rights reserved.
+</p>
+</body>
+</html>
+{{end}}

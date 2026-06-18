@@ -1,0 +1,24 @@
+# Binary
+l-asset-running
+l-asset.exe
+l-asset-new
+
+# Data
+data/config.json
+data/l-asset.db
+data/uploads/*
+
+# Output
+output/*
+
+# Temp
+*.py
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/

@@ -1,0 +1,171 @@
+{{define "content"}}
+<div id="app">
+  <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">报废资产</h1>
+  </div>
+
+  <div class="card p-4 mb-6">
+    <div class="flex flex-col sm:flex-row gap-3">
+      <input type="text" id="searchInput" oninput="loadAssets(1)" placeholder="搜索资产编号/品牌/型号/报废原因..." class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm">
+      <select id="typeFilter" onchange="loadAssets(1)" class="px-3 py-2 border border-gray-300 rounded-lg text-sm">
+        <option value="">全部类型</option>
+        <option value="笔记本">笔记本</option>
+        <option value="台式机">台式机</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">资产编号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">类型</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">品牌/型号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">序列号</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">报废原因</th>
+            <th class="text-left px-4 py-3 font-semibold text-gray-600">报废时间</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600">操作</th>
+          </tr>
+        </thead>
+        <tbody id="assetTableBody"></tbody>
+      </table>
+    </div>
+    <div id="pagination" class="flex items-center justify-between px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm"></div>
+  </div>
+</div>
+
+<!-- 复活弹窗 -->
+<div id="restoreModal" class="modal-overlay" onclick="if(event.target===this)closeRestoreModal()">
+  <div class="modal-content" style="max-width:28rem">
+    <h2 class="text-lg font-bold text-green-700 mb-4">🌱 复活资产</h2>
+    <p class="text-sm text-gray-500 mb-4" id="restoreInfo"></p>
+    <div class="mb-3">
+      <label class="block text-xs text-gray-500 mb-1">复活原因</label>
+      <select id="restoreReason" onchange="toggleRestoreReasonOther()" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+        <option value="维修好了">维修好了</option>
+        <option value="误报废">误报废</option>
+        <option value="无需报废">无需报废</option>
+        <option value="其他">其他</option>
+      </select>
+    </div>
+    <div id="restoreReasonOtherWrap" class="hidden mb-3">
+      <label class="block text-xs text-gray-500 mb-1">其他原因</label>
+      <input type="text" id="restoreReasonOther" placeholder="请输入原因" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+    </div>
+    <div class="mb-4">
+      <label class="block text-xs text-gray-500 mb-1">备注（可选）</label>
+      <textarea id="restoreNotes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></textarea>
+    </div>
+    <div class="flex justify-end gap-3">
+      <button onclick="closeRestoreModal()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+      <button onclick="doRestore()" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 text-sm font-medium">确认复活</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentPage = 1, totalPages = 1, totalAssets = 0, pageSize = 20;
+let restoreId = null;
+
+function toggleRestoreReasonOther() {
+  const val = document.getElementById('restoreReason').value;
+  document.getElementById('restoreReasonOtherWrap').classList.toggle('hidden', val !== '其他');
+}
+
+function loadAssets(page) {
+  currentPage = page || 1;
+  const search = document.getElementById('searchInput').value;
+  const type = document.getElementById('typeFilter').value;
+  const params = new URLSearchParams({page: currentPage, pageSize: pageSize});
+  if (search) params.set('search', search);
+  if (type) params.set('type', type);
+
+  fetch('/api/scrapped?'+params).then(r=>r.json()).then(d => {
+    totalPages = d.totalPages;
+    totalAssets = d.total;
+
+    const tbody = document.getElementById('assetTableBody');
+    if (d.assets.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-12 text-center text-gray-400">暂无报废资产</td></tr>';
+    } else {
+      const kw = (document.getElementById('searchInput').value || '').trim();
+      tbody.innerHTML = d.assets.map(a => {
+        const reasonHtml = a.scrap_reason ? '<span class="font-medium">'+escHtml(a.scrap_reason)+'</span>'+(a.scrap_notes?'<br><span class="text-gray-400 text-xs">'+escHtml(a.scrap_notes)+'</span>':'') : '-';
+        return '<tr class="border-b border-gray-100 hover:bg-gray-50">' +
+          '<td class="px-4 py-3 font-medium"><a href="/scrapped/asset/'+a.id+'" class="text-red-600 hover:underline">'+hl(a.asset_tag, kw)+'</a></td>' +
+          '<td class="px-4 py-3">'+hl(a.type||'', kw)+'</td>' +
+          '<td class="px-4 py-3">'+hl((a.brand||'')+' '+(a.model||''), kw)+'</td>' +
+          '<td class="px-4 py-3 text-gray-500 text-xs">'+hl(a.serial||'', kw)+'</td>' +
+          '<td class="px-4 py-3 text-xs">'+reasonHtml+'</td>' +
+          '<td class="px-4 py-3 text-xs text-gray-500">'+escHtml(a.scrapped_at||'')+'</td>' +
+          '<td class="px-4 py-3 text-right">' +
+            '<a href="/scrapped/asset/'+a.id+'" class="text-primary-500 hover:text-primary-700 text-xs font-medium mr-3">详情</a>' +
+            '<button onclick="showRestore('+a.id+', \''+escapeAttr(a.asset_tag)+'\')" class="text-green-600 hover:text-green-800 text-xs font-medium">🌱 复活</button></td></tr>';
+      }).join('');
+    }
+
+    // Pagination
+    document.getElementById('pagination').innerHTML =
+      '<span class="text-xs text-gray-500">共 '+totalAssets+' 项 / '+totalPages+' 页</span>' +
+      '<div class="flex gap-2 items-center">' +
+        '<span class="text-xs text-gray-400">' + ((currentPage-1)*pageSize+1) + '-' + Math.min(currentPage*pageSize, totalAssets) + '</span>' +
+        (currentPage > 1 ? '<button onclick="loadAssets('+(currentPage-1)+')\" class="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm">上一页</button>' : '') +
+        (currentPage < totalPages ? '<button onclick="loadAssets('+(currentPage+1)+')\" class="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-100 text-sm">下一页</button>' : '') +
+      '</div>';
+  });
+}
+
+function showRestore(id, tag) {
+  restoreId = id;
+  document.getElementById('restoreInfo').textContent = '资产编号: ' + tag;
+  document.getElementById('restoreReason').value = '维修好了';
+  document.getElementById('restoreReasonOther').value = '';
+  document.getElementById('restoreNotes').value = '';
+  document.getElementById('restoreReasonOtherWrap').classList.add('hidden');
+  document.getElementById('restoreModal').classList.add('active');
+}
+
+function closeRestoreModal() {
+  document.getElementById('restoreModal').classList.remove('active');
+  restoreId = null;
+}
+
+function doRestore() {
+  if (!restoreId) return;
+  let reason = document.getElementById('restoreReason').value;
+  if (reason === '其他') {
+    reason = document.getElementById('restoreReasonOther').value || '其他';
+  }
+  const notes = document.getElementById('restoreNotes').value;
+
+  fetch('/api/scrapped/'+restoreId+'/restore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason: reason, notes: notes})})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') {
+      closeRestoreModal();
+      loadAssets(currentPage);
+    } else { alert('操作失败: '+(d.error||'未知错误')); }
+  }).catch(e => alert('操作失败: '+e));
+}
+
+function hl(text, kw) {
+  if (!kw || !text) return escHtml(text);
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('(' + escaped + ')', 'gi');
+  return escHtml(text).replace(re, '<mark class="bg-yellow-200 px-0.5 rounded">$1</mark>');
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escapeAttr(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+document.addEventListener('DOMContentLoaded', () => { loadAssets(1); });
+</script>
+{{end}}

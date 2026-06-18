@@ -1,0 +1,192 @@
+{{define "content"}}
+<div x-data="userManager">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">用户管理</h1>
+    <button @click="showAdd=true" class="btn px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium">+ 添加用户</button>
+  </div>
+
+  <!-- 批量操作条 -->
+  <div id="userBatchBar" class="hidden bg-primary-50 border border-primary-200 rounded-lg px-4 py-3 mb-4 flex items-center justify-between">
+    <span class="text-sm font-medium text-primary-700" id="userSelectedCount">已选 0 项</span>
+    <div class="flex gap-2">
+      <button onclick="batchEnableUsers()" class="px-3 py-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 text-xs font-medium">批量启用</button>
+      <button onclick="batchDisableUsers()" class="px-3 py-1.5 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 text-xs font-medium">批量停用</button>
+      <button onclick="batchDeleteUsers()" class="px-3 py-1.5 bg-red-500 text-white rounded-lg hover:bg-red-600 text-xs font-medium">批量删除</button>
+    </div>
+  </div>
+
+  <div class="card overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="bg-gray-50 border-b border-gray-200">
+          <th class="px-4 py-3 w-10"><input type="checkbox" id="userSelectAll" onchange="toggleSelectAllUsers()" class="w-4 h-4 text-blue-600 rounded"></th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">姓名</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">部门</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">电话</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">邮箱</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">备注</th>
+          <th class="text-left px-4 py-3 font-semibold text-gray-600">状态</th>
+          <th class="text-right px-4 py-3 font-semibold text-gray-600">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="u in users" :key="u.id">
+          <tr class="border-b border-gray-100 hover:bg-gray-50">
+            <td class="px-4 py-3"><input type="checkbox" class="user-check w-4 h-4 text-blue-600 rounded" :value="u.id" onchange="updateBatchBar()"></td>
+            <td class="px-4 py-3 font-medium"><a :href="'/user/' + u.id + '/assets'" class="hover:text-primary-600" x-text="u.name"></a></td>
+            <td class="px-4 py-3 text-gray-500" x-text="u.department || '-'"></td>
+            <td class="px-4 py-3 text-gray-500" x-text="u.phone || '-'"></td>
+            <td class="px-4 py-3 text-gray-500" x-text="u.email || '-'"></td>
+            <td class="px-4 py-3 text-gray-500 max-w-[120px] truncate" x-text="u.notes || '-'" :title="u.notes || ''"></td>
+            <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-xs font-medium" x-bind:class="u.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'" x-text="u.active ? '启用' : '停用'"></span></td>
+            <td class="px-4 py-3 text-right">
+              <button @click="editUser(u)" class="text-primary-500 hover:text-primary-700 text-xs font-medium mr-3">编辑</button>
+              <button @click="deleteUser(u.id)" class="text-red-500 hover:text-red-700 text-xs font-medium">删除</button>
+            </td>
+          </tr>
+        </template>
+        <tr x-show="users.length === 0">
+          <td colspan="8" class="px-4 py-12 text-center text-gray-400">暂无用户数据，请添加用户</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 添加/编辑弹窗 -->
+  <div x-show="showAdd" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" @click.self="showAdd=false">
+    <div class="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
+      <h2 class="text-lg font-bold mb-4" x-text="editing ? '编辑用户' : '添加用户'"></h2>
+      <div class="space-y-3">
+        <div><label class="block text-xs text-gray-500 mb-1">姓名 *</label><input type="text" x-model="form.name" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">部门</label><input type="text" x-model="form.department" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">电话</label><input type="text" x-model="form.phone" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">邮箱</label><input type="email" x-model="form.email" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div><label class="block text-xs text-gray-500 mb-1">角色</label>
+          <select x-model="form.role" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+            <option value="user">普通用户</option>
+            <option value="admin">管理员</option>
+          </select>
+        </div>
+        <div x-show="!editing"><label class="block text-xs text-gray-500 mb-1">密码（留空默认 123）</label><input type="password" x-model="form.password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div x-show="editing"><label class="block text-xs text-gray-500 mb-1">新密码（留空不修改）</label><input type="password" x-model="form.password" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></div>
+        <div x-show="editing">
+          <label class="block text-xs text-gray-500 mb-1">状态</label>
+          <label class="inline-flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" x-model="form.active" :true-value="1" :false-value="0" class="w-4 h-4 text-primary-600 rounded" :disabled="editing.name === 'admin'">
+            <span class="text-sm" x-text="form.active ? '启用' : '停用'" :class="{'text-gray-400': editing.name === 'admin'}"></span>
+            <span x-show="editing.name === 'admin'" class="text-xs text-gray-400">（管理员不可停用）</span>
+          </label>
+        </div>
+        <div><label class="block text-xs text-gray-500 mb-1">备注</label><textarea x-model="form.notes" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"></textarea></div>
+      </div>
+      <div class="flex justify-end gap-3 mt-5">
+        <button @click="showAdd=false" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm">取消</button>
+        <button @click="saveUser()" class="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 text-sm font-medium" x-text="editing ? '保存' : '添加'"></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('alpine:init', () => {
+  Alpine.data('userManager', () => ({
+    users: [],
+    showAdd: false,
+    editing: null,
+    form: { name: '', department: '', phone: '', email: '', notes: '', role: 'user', active: 1 },
+
+    init() { this.loadUsers() },
+
+    loadUsers() {
+      fetch('/api/users').then(r=>r.json()).then(d => { this.users = d });
+    },
+
+    editUser(u) {
+      this.editing = u;
+      this.form = { name: u.name, department: u.department || '', phone: u.phone || '', email: u.email || '', password: '', notes: u.notes || '', active: u.active, role: u.role || 'user' };
+      this.showAdd = true;
+    },
+
+    saveUser() {
+      if (!this.form.name.trim()) return;
+      const body = { ...this.form };
+      if (this.editing && !body.password) delete body.password;
+      const url = this.editing ? '/api/users/' + this.editing.id : '/api/users';
+      const method = this.editing ? 'PUT' : 'POST';
+      fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
+      .then(r=>r.json()).then(() => {
+        this.showAdd = false;
+        this.editing = null;
+        this.form = { name: '', department: '', phone: '', email: '', notes: '', active: 1, role: 'user' };
+        this.loadUsers();
+      });
+    },
+
+    deleteUser(id) {
+      if (!confirm('确定删除此用户？')) return;
+      fetch('/api/users/' + id, { method: 'DELETE' }).then(() => this.loadUsers());
+    },
+  }))
+})
+</script>
+
+<script>
+// ── 批量操作 ──
+function getSelectedUserIds() {
+  return [...document.querySelectorAll('.user-check:checked')].map(cb => parseInt(cb.value));
+}
+
+function updateBatchBar() {
+  const ids = getSelectedUserIds();
+  const bar = document.getElementById('userBatchBar');
+  document.getElementById('userSelectedCount').textContent = '已选 ' + ids.length + ' 项';
+  if (ids.length > 0) bar.classList.remove('hidden');
+  else bar.classList.add('hidden');
+}
+
+function toggleSelectAllUsers() {
+  const checked = document.getElementById('userSelectAll').checked;
+  document.querySelectorAll('.user-check').forEach(cb => cb.checked = checked);
+  updateBatchBar();
+}
+
+function batchEnableUsers() {
+  const ids = getSelectedUserIds();
+  if (!ids.length) return;
+  fetch('/api/users/batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, action:'enable'})})
+  .then(r=>r.json()).then(d => {
+    if (d.status === 'ok') document.querySelector('[x-data]').__x.$data.loadUsers();
+    else alert('操作失败: '+(d.error||''));
+  });
+}
+
+function batchDisableUsers() {
+  const ids = getSelectedUserIds();
+  if (!ids.length) return;
+  fetch('/api/users').then(r=>r.json()).then(users => {
+    const adminIds = users.filter(u => u.name === 'admin').map(u => u.id);
+    if (ids.some(id => adminIds.includes(id))) { alert('不能停用管理员账户'); return; }
+    fetch('/api/users/batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, action:'disable'})})
+    .then(r=>r.json()).then(d => {
+      if (d.status === 'ok') document.querySelector('[x-data]').__x.$data.loadUsers();
+      else alert('操作失败: '+(d.error||''));
+    });
+  });
+}
+
+function batchDeleteUsers() {
+  const ids = getSelectedUserIds();
+  if (!ids.length) return;
+  fetch('/api/users').then(r=>r.json()).then(users => {
+    const adminIds = users.filter(u => u.name === 'admin').map(u => u.id);
+    if (ids.some(id => adminIds.includes(id))) { alert('不能删除管理员账户'); return; }
+    if (!confirm('确认删除选中的 ' + ids.length + ' 个用户？此操作不可撤销！')) return;
+    fetch('/api/users/batch', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids, action:'delete'})})
+    .then(r=>r.json()).then(d => {
+      if (d.status === 'ok') document.querySelector('[x-data]').__x.$data.loadUsers();
+      else alert('操作失败: '+(d.error||''));
+    });
+  });
+}
+</script>
+{{end}}

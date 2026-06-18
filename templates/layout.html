@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L-Asset 资产管理系统</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script>
+var THEMES = {
+  orange: {50:'#fff7ed',100:'#ffedd5',200:'#fed7aa',300:'#fdba74',400:'#fb923c',500:'#f97316',600:'#ea580c',700:'#c2410c',800:'#9a3412',900:'#7c2d12'},
+  blue:   {50:'#f0f4ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a'}
+};
+function applyTheme(name) {
+  var c = THEMES[name] || THEMES.orange;
+  localStorage.setItem('lasset_theme', name);
+  document.documentElement.setAttribute('data-theme', name);
+  document.getElementById('themeIcon').textContent = name === 'orange' ? '🌙' : '☀️';
+}
+function toggleTheme() {
+  var cur = localStorage.getItem('lasset_theme') || 'orange';
+  var next = cur === 'orange' ? 'blue' : 'orange';
+  applyTheme(next);
+}
+(function(){
+  var saved = localStorage.getItem('lasset_theme') || 'orange';
+  applyTheme(saved);
+})();
+</script>
+<style>
+[data-theme="orange"] { --tc-50: #fff7ed; --tc-100: #ffedd5; --tc-200: #fed7aa; --tc-300: #fdba74; --tc-400: #fb923c; --tc-500: #f97316; --tc-600: #ea580c; --tc-700: #c2410c; --tc-800: #9a3412; --tc-900: #7c2d12; --logo-body: #fdba74; --logo-base: #fb923c; --logo-text: white; }
+[data-theme="blue"] { --tc-50: #f0f4ff; --tc-100: #dbeafe; --tc-200: #bfdbfe; --tc-300: #93c5fd; --tc-400: #60a5fa; --tc-500: #3b82f6; --tc-600: #2563eb; --tc-700: #1d4ed8; --tc-800: #1e40af; --tc-900: #1e3a8a; --logo-body: #7dd3fc; --logo-base: #38bdf8; --logo-text: #2563eb; }
+[data-theme] .text-primary-50 { color: var(--tc-50); }
+[data-theme] .text-primary-100 { color: var(--tc-100); }
+[data-theme] .text-primary-200 { color: var(--tc-200); }
+[data-theme] .text-primary-300 { color: var(--tc-300); }
+[data-theme] .text-primary-400 { color: var(--tc-400); }
+[data-theme] .text-primary-500 { color: var(--tc-500); }
+[data-theme] .text-primary-600 { color: var(--tc-600); }
+[data-theme] .text-primary-700 { color: var(--tc-700); }
+[data-theme] .text-primary-800 { color: var(--tc-800); }
+[data-theme] .text-primary-900 { color: var(--tc-900); }
+[data-theme] .bg-primary-50 { background-color: var(--tc-50); }
+[data-theme] .bg-primary-100 { background-color: var(--tc-100); }
+[data-theme] .bg-primary-200 { background-color: var(--tc-200); }
+[data-theme] .bg-primary-300 { background-color: var(--tc-300); }
+[data-theme] .bg-primary-400 { background-color: var(--tc-400); }
+[data-theme] .bg-primary-500 { background-color: var(--tc-500); }
+[data-theme] .bg-primary-600 { background-color: var(--tc-600); }
+[data-theme] .bg-primary-700 { background-color: var(--tc-700); }
+[data-theme] .bg-primary-800 { background-color: var(--tc-800); }
+[data-theme] .bg-primary-900 { background-color: var(--tc-900); }
+[data-theme] .hover\:bg-primary-50:hover { background-color: var(--tc-50); }
+[data-theme] .hover\:bg-primary-100:hover { background-color: var(--tc-100); }
+[data-theme] .hover\:bg-primary-600:hover { background-color: var(--tc-600); }
+[data-theme] .hover\:bg-primary-700:hover { background-color: var(--tc-700); }
+[data-theme] .border-primary-200 { border-color: var(--tc-200); }
+[data-theme] .border-primary-300 { border-color: var(--tc-300); }
+[data-theme] .border-primary-50 { border-color: var(--tc-50); }
+[data-theme] .to-primary-50 { --tw-gradient-to: var(--tc-50); }
+[data-theme] .fill-logo-body { fill: var(--logo-body); }
+[data-theme] .fill-logo-base { fill: var(--logo-base); }
+[data-theme] .fill-logo-text { fill: var(--logo-text); }
+</style>
+<style>
+body { background: #f8fafc; }
+.card { background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); transition: box-shadow .2s; }
+.card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.1); }
+.btn { transition: all .15s; cursor: pointer; }
+.status-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.status-&#x5728;&#x5E93; { background: #dcfce7; color: #166534; }
+.status-&#x5DF2;&#x9886;&#x7528; { background: #dbeafe; color: #1e40af; }
+.status-&#x5DF2;&#x5F52;&#x8FD8; { background: #fef3c7; color: #92400e; }
+.status-&#x5DF2;&#x62A5;&#x5E9F; { background: #fee2e2; color: #991b1b; }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 50; align-items: center; justify-content: center; }
+.modal-overlay.active { display: flex; }
+.modal-content { background: white; border-radius: 16px; padding: 24px; width: 100%; max-width: 32rem; margin: 0 16px; max-height: 85vh; overflow-y: auto; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<nav class="bg-white border-b border-gray-200 sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <div class="flex justify-between h-16 items-center">
+      <div class="flex items-center gap-8">
+        <a href="/" class="flex items-center gap-2 font-bold text-xl text-primary-600">
+          <svg class="w-7 h-7" viewBox="0 0 32 32" fill="none">
+            <!-- 底部圆角方块（设备机身） -->
+            <rect x="3" y="8" width="26" height="20" rx="3" class="fill-logo-body"/>
+            <!-- 顶部指示灯 -->
+            <circle cx="8" cy="13" r="1.5" fill="#f9a8d4"/>
+            <circle cx="13" cy="13" r="1.5" fill="#a7f3d0"/>
+            <circle cx="18" cy="13" r="1.5" fill="#fde68a"/>
+            <!-- 右侧标签/挂牌 -->
+            <rect x="22" y="17" width="7" height="5" rx="1" fill="#f9a8d4"/>
+            <line x1="24" y1="19.5" x2="27" y2="19.5" stroke="white" stroke-width="0.8" stroke-linecap="round"/>
+            <line x1="24" y1="20.8" x2="26.5" y2="20.8" stroke="white" stroke-width="0.8" stroke-linecap="round"/>
+            <!-- 底部的连接线/支架 -->
+            <rect x="8" y="28" width="16" height="2" rx="0.5" class="fill-logo-base"/>
+            <!-- L 字母标记 -->
+            <text x="9" y="24" font-family="Arial,sans-serif" font-weight="bold" font-size="11" class="fill-logo-text">L</text>
+          </svg>
+          L-Asset
+        </a>
+        <div class="hidden md:flex items-center gap-1 text-sm font-medium text-gray-600">
+          <a href="/" class="px-3 py-2 rounded-lg hover:bg-gray-100 transition">概览</a>
+          <a href="/assets" class="px-3 py-2 rounded-lg hover:bg-gray-100 transition">资产列表</a>
+          <a href="/scrapped" class="px-3 py-2 rounded-lg hover:bg-gray-100 transition">报废资产</a>
+          {{if .IsAdmin}}<a href="/finance" class="px-3 py-2 rounded-lg hover:bg-gray-100 transition">财务管理</a>{{end}}
+          <a href="/transactions" class="px-3 py-2 rounded-lg hover:bg-gray-100 transition">操作记录</a>
+          {{if .IsAdmin}}<a href="/users" class="px-3 py-2 rounded-lg hover:bg-gray-100 transition">用户管理</a>{{end}}
+          {{if .IsAdmin}}<a href="/import" class="px-3 py-2 rounded-lg hover:bg-gray-100 transition">批量导入</a>{{end}}
+          {{if .IsAdmin}}<a href="/fields" class="px-3 py-2 rounded-lg hover:bg-gray-100 transition">字段管理</a>{{end}}
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-sm text-gray-500">{{.User}}</span>
+        <button id="themeBtn" onclick="toggleTheme()" class="w-7 h-7 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition flex items-center justify-center" title="切换主题">
+          <span id="themeIcon">🌙</span>
+        </button>
+        <a href="/settings" class="inline-flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition" title="设置">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        </a>
+        <button onclick="doLogout()" class="text-sm text-gray-400 hover:text-gray-600">退出</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+{{block "content" .}}{{end}}
+</main>
+
+<script>
+function doLogout() {
+  fetch('/api/logout', {method:'POST'}).then(() => { window.location.href = '/login'; });
+}
+
+// ── 智能粘贴核心（共用函数，index/assets 双入口） ──
+function smartParse(text) {
+  var result = {};
+  var lowerText = text.toLowerCase();
+  var brandMap = {
+    'lenovo':'Lenovo','thinkpad':'Lenovo','thinkcentre':'Lenovo','thinkstation':'Lenovo','thinkbook':'Lenovo','thinkvision':'Lenovo',
+    'dell':'Dell','latitude':'Dell','optiplex':'Dell','precision':'Dell','xps':'Dell','poweredge':'Dell','inspiron':'Dell','vostro':'Dell','alienware':'Dell',
+    'hp':'HP','elitebook':'HP','probook':'HP','zbook':'HP','prodesk':'HP','elitedesk':'HP','pavilion':'HP','spectre':'HP','envy':'HP','omen':'HP',
+    'apple':'Apple','macbook':'Apple','mac pro':'Apple','mac mini':'Apple','imac':'Apple','mac studio':'Apple','ipad':'Apple',
+    'huawei':'Huawei','matebook':'Huawei','honor':'Huawei',
+    'asus':'ASUS','vivobook':'ASUS','zenbook':'ASUS','rog':'ASUS','tuf':'ASUS',
+    'acer':'Acer','predator':'Acer','swift':'Acer','aspire':'Acer',
+    'microsoft':'Microsoft','surface':'Microsoft',
+    'fujitsu':'Fujitsu','toshiba':'Toshiba','sony':'Sony','vaio':'Sony',
+    'panasonic':'Panasonic','xiaomi':'Xiaomi','redmi':'Xiaomi','mi':'Xiaomi',
+    'samsung':'Samsung','lg':'LG','nec':'NEC','ibm':'Lenovo','gigabyte':'Gigabyte','msi':'MSI','razer':'Razer',
+    '联想':'Lenovo','戴尔':'Dell','惠普':'HP','华硕':'ASUS','华为':'Huawei','宏碁':'Acer','小米':'Xiaomi','三星':'Samsung'
+  };
+  for (var k in brandMap) { if (lowerText.indexOf(k) >= 0) { result.brand = brandMap[k]; break; } }
+  var snPats = [/(?:sn|s\/n|serial\s*(?:no|number|#|num)?|service\s*tag|序列号|编号|sn码|出厂编号)\s*[:：]?\s*([\w\-]{5,})/i, /(?:p\/n|part\s*(?:no|number|#)|asset\s*tag|product\s*#)\s*[:：]?\s*([\w\-]{5,})/i];
+  for (var i=0;i<snPats.length;i++) { var m=text.match(snPats[i]); if (m) { result.serial=m[1].trim(); break; } }
+  if (!result.serial) {
+    var lines=text.split(/[\n\r]+/).map(function(l){return l.trim();}).filter(function(l){return l;});
+    for (var li=0;li<lines.length;li++) { var l=lines[li]; if (/^[A-Za-z0-9\-]{6,}$/.test(l) && !/^[a-z]{2,}/.test(l) && !/^(\d{4})$/.test(l)) { result.serial=l.toUpperCase(); break; } }
+  }
+  if (result.brand) {
+    var mp = /(ThinkPad|ThinkCentre|ThinkStation|Latitude|OptiPlex|Precision|XPS|EliteBook|ProBook|ZBook|ProDesk|EliteDesk|Pavilion|MacBook Pro|MacBook Air|Mac Pro|Mac Mini|Mac Studio|MateBook|Surface\s*\w+|Inspiron|Vostro|ThinkBook|Galaxy|Spectre|Envy|ZenBook|VivoBook|ROG|Predator|Swift|Aspire)\s+([A-Za-z0-9\s\-]+?)(?=\s*(?:(?:SN|S\/N|Serial|$)|\/|,|\||\n|[A-Z]{2,}:))/i;
+    var m2 = text.match(mp);
+    if (m2) { result.model = m2[2].trim(); if (result.model.length > 30) result.model = result.model.slice(0,30).trim(); }
+  }
+  if (!result.model && result.brand === 'Dell') { var dm = text.match(/[A-Z][a-z]*[0-9]{3,4}[A-Z]?[a-z]?\b/); if (dm) result.model = dm[0]; }
+  if (!result.model && result.brand === 'HP') { var hm = text.match(/G\d\b/); if (hm) result.model = hm[0]; }
+  var cpuPats = [/(?:Intel\s+)?(?:Core\s+)?i[3579][-]?\d{4,5}[A-Za-z]*(?:\s+P|U|H|HK|HX|HQ|K|F)?/i, /(?:Intel\s+)?(?:Core\s+)?Ultra\s+\d{3}[A-Z]?/i, /(?:Intel\s+)?Xeon\s+[\w\s]+?\d+/i, /(?:Intel\s+)?(?:Celeron|赛扬|Pentium|奔腾)\s+N?\d+/i, /(?:AMD\s+)?(?:Ryzen|锐龙)\s+\d+\s*\d{4}[A-Z]?/i, /(?:AMD\s+)?Ryzen\s+(?:Threadripper|PRO)\s+\d+/i];
+  for (var c=0;c<cpuPats.length;c++) { var cm=text.match(cpuPats[c]); if (cm) { result.cpu=cm[0].replace(/Intel\s+/i,'').replace(/Core\s+/i,'').replace(/AMD\s+/i,'').trim(); break; } }
+  var memPats = [/(\d+)\s*G(?:B)?\s*(?:RAM|内存|DDR[2345]?|LPDDR[345]?|内存)\b/i, /(?:RAM|内存|DDR[2345]?|LPDDR[345]?)\s*(\d+)\s*G(?:B)?\b/i, /(\d+)\s*G(?:B)?(?:\s*[x×]\s*\d+)?\s*(?:RAM|内存)\b/i];
+  for (var mi=0;mi<memPats.length;mi++) { var mm=text.match(memPats[mi]); if (mm) { var n=parseInt(mm[1]); if (n>=2&&n<=256) { result.memory=mm[1]+'GB'; break; } } }
+  if (!result.memory) {
+    var rawMem = text.match(/(\d+)\s*G(?:B)?(?!\s*\d+(?:GB|G|TB|T))/i);
+    while (rawMem) { var n=parseInt(rawMem[1]); if ([4,8,12,16,24,32,48,64,96,128,192,256].indexOf(n)>=0) { var dnm=(result.disk||'').match(/^(\d+)/); if (!dnm||parseInt(dnm[1])!==n) { result.memory=rawMem[1]+'GB'; break; } } var rest=text.slice(rawMem.index+rawMem[0].length); rawMem=rest.match(/(\d+)\s*G(?:B)?/i); }
+  }
+  var diskPats = [/(\d+)\s*(?:GB|TB|G|T)\s*(SSD|HDD|NVMe|固态|机械|M\.2|PCIe|硬盘)/i, /(SSD|HDD|NVMe|固态|机械|M\.2)\s*(\d+)\s*(?:GB|TB|G|T)/i, /(\d+)\s*(?:GB|TB|G|T)(?:\s+PCIe)?(?:\s+NVMe)?(?:\s+SSD)?/i];
+  for (var di=0;di<diskPats.length;di++) { var dm2=text.match(diskPats[di]); if (dm2) { var du=/tb/i.test(dm2[0])?'TB':'GB'; var dt=dm2[0].match(/SSD|HDD|NVMe|固态|机械|M\.2/i); result.disk=dm2[1]+du+(dt?' '+dt[0]:''); break; } }
+  var scr = text.match(/(\d+(?:\.\d+)?)\s*(?:寸|英寸|吋|\"|inch)/i);
+  if (scr) result.notes = (result.notes||'') + scr[1] + '寸';
+  var osP = /Windows\s*(?:10|11|Server|7|8|8\.1|XP|Vista)\s*(?:Pro|Enterprise|Home|专业版|企业版|家庭版|工作站|Iot)?/i;
+  var osM = text.match(osP);
+  if (osM) result.notes = (result.notes?result.notes+' / ':'') + osM[0];
+  var osM2 = text.match(/macOS|Ubuntu|Linux\s+(?:Mint|Ubuntu|Debian|Fedora|CentOS|Alpine)/gi);
+  if (osM2) result.notes = (result.notes?result.notes+' / ':'') + osM2[0];
+  var sc = text.match(/(京东|淘宝|天猫|拼多多|苏宁|供应商|采购渠道)\s*[:：]?\s*([^\s,，、、\n]+)/);
+  if (sc) result.supplier = sc[2];
+  var pp = text.match(/[¥￥]\s*(\d+(?:[.,]\d+)?)/);
+  if (pp) result.purchase_price = parseFloat(pp[1].replace(',',''));
+  var dp = /(\d{4})[\-\/年](\d{1,2})[\-\/月](\d{1,2})日?/;
+  var dm = text.match(dp);
+  if (dm) { var d=dm[1]+'-'+String(parseInt(dm[2])).padStart(2,'0')+'-'+String(parseInt(dm[3])).padStart(2,'0'); result.purchase_date=d; }
+  return result;
+}
+</script>
+
+<footer class="border-t border-gray-200 bg-white mt-8">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-center text-xs text-gray-400">
+    L-Asset v1.0 &copy; 2026 乐为爸爸. All rights reserved.
+  </div>
+</footer>
+
+</body>
+</html>
