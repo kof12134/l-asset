@@ -907,17 +907,27 @@ func createAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if a.AssetTag == "" {
-		// Auto-generate tag: type abbr + sequence (per type, from 001)
-		abbr := "PC"
+		// Auto-generate tag: company_name-abbr-序列号 (e.g. 乐乐-NB-001)
+		cfg := loadConfig()
+		company := cfg.CompanyName
+		if company == "" {
+			company = "PC"
+		}
+		abbr := ""
 		if a.Type != "" {
 			db.QueryRow("SELECT abbr FROM field_presets WHERE field_key='type' AND field_value=?", a.Type).Scan(&abbr)
 		}
 		if abbr == "" {
-			abbr = "PC"
+			abbr = a.Type
+			if abbr == "" {
+				abbr = "PC"
+			}
 		}
+		prefix := fmt.Sprintf("%s-%s-", company, abbr)
+		pattern := prefix + "%"
 		var maxSeq int
-		db.QueryRow(fmt.Sprintf("SELECT COALESCE(MAX(CAST(SUBSTR(asset_tag, LENGTH(asset_tag)-2) AS INTEGER)), 0) FROM assets WHERE asset_tag LIKE '%s-___'", abbr)).Scan(&maxSeq)
-		a.AssetTag = fmt.Sprintf("%s-%03d", abbr, maxSeq+1)
+		db.QueryRow("SELECT COALESCE(MAX(CAST(SUBSTR(asset_tag, ?) AS INTEGER)), 0) FROM assets WHERE asset_tag LIKE ?", len(prefix)+1, pattern).Scan(&maxSeq)
+		a.AssetTag = fmt.Sprintf("%s%03d", prefix, maxSeq+1)
 	}
 	// Auto-set status based on current_user (override whatever frontend sent)
 	if a.CurrentUser != "" {
@@ -1023,11 +1033,13 @@ func updateAsset(w http.ResponseWriter, r *http.Request, id int) {
 		return
 	}
 
-	var currentStatus string
-	db.QueryRow("SELECT status FROM assets WHERE id=?").Scan(&currentStatus)
-
-	// Status auto-set based on current_user
-	newStatus := currentStatus
+	// Determine status: prefer explicit value from edit form, else auto-set based on current_user
+	newStatus := a.Status
+	if newStatus == "" {
+		var currentStatus string
+		db.QueryRow("SELECT status FROM assets WHERE id=?").Scan(&currentStatus)
+		newStatus = currentStatus
+	}
 	if a.CurrentUser != "" {
 		newStatus = "已领用"
 	} else if newStatus == "已领用" {

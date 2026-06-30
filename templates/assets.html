@@ -465,7 +465,8 @@ function doBatchDelete() {
 
 // ── Clone asset ──
 function cloneAsset(id) {
-  fetch('/api/assets/'+id).then(r=>r.json()).then(a => {
+  fetch('/api/assets/'+id).then(r=>r.json()).then(resp => {
+    const a = resp.asset || resp;
     loadPresets();
     loadUsersForSelect();
     // Wait for presets to load, then fill form

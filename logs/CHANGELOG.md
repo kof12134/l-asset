@@ -5,8 +5,8 @@
 **编程语言：** Go 1.21+（编译期 Go 1.26.4）  
 **数据库：** SQLite（通过 modernc.org/sqlite 纯 Go 驱动）  
 **前端：** Alpine.js 3.x + Tailwind CSS（CDN）  
-**当前源码：** `/vol1/1000/WorkSpace/asset-manager/main.go`（~1750 行）  
-**更新日期：** 2026-06-16
+**当前源码：** `/vol1/1000/WorkSpace/asset-manager/main.go`（~3575 行）  
+**更新日期：** 2026-06-30
 
 ---
 
@@ -417,6 +417,36 @@ Windows：双击 `start.bat`
 2. **admin 密码在测试过程中多次被覆盖** — 根本原因是前端编辑用户时 `role` 和 `active` 字段缺失。已修复：后端做空值保留处理。
 3. **密码恢复** — 数据库直接改：`UPDATE users SET password='240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9' WHERE name='admin'`（重置为 `admin123`）
 
+### 3.15 克隆功能修复（2026-06-30）
+
+**问题：** 资产列表点击「克隆」后，弹出添加表单未填入原资产的数据。
+
+**根因：** `getAsset` API 返回 `{"asset": {...}, "finance": {...}}` 结构，但 `cloneAsset()` 中直接从顶层取 `a.type`、`a.brand` 等字段，未通过 `a.asset` 访问。
+
+**修复：** `cloneAsset()` 改为 `const a = resp.asset || resp` 解包。
+
+### 3.16 资产编号格式修正（2026-06-30）
+
+**问题：** 设置了企业名称后，自动生成的资产编号仍以 `PC-001` 格式创建，未按设计使用公司名+缩写+序号。
+
+**修改：** 编号生成改为 `公司名-类型缩写-三位序号`（如 `乐乐-NB-001`），缩写取自 `field_presets` 表的 `abbr` 字段（字段管理页面可配置）。
+
+### 3.17 资产状态编辑修复（2026-06-30）
+
+**问题：** 
+1. 编辑页面中状态字段为只读（`status_readonly`），添加时未选状态的话编辑时无法修改。
+2. 即使修改了，后端 `updateAsset()` 中状态被 `currentStatus`（数据库旧值）覆盖，忽略前端传入的值。
+
+**修复：**
+- 编辑页状态改为下拉选择（`select`），使用 `status` 预设值。
+- 后端优先使用前端传的 `status`，再根据 `current_user` 自动调整。
+
+### 3.18 Windows 启动脚本改进（2026-06-30）
+
+**修改：**
+- `start.bat`：后台启动服务 + 打开浏览器，窗口自动退出，exe 继续运行。
+- 新增 `start-silent.bat`：菜单式管理工具（启动/停止/查看状态）。
+
 ### 待办（未来方向）
 
 - [ ] systemd 服务自动启动
@@ -429,4 +459,4 @@ Windows：双击 `start.bat`
 ---
 
 *日志维护者：Hu（AI assistant）*  
-*最后更新：2026-06-16 23:45 GMT+8*
+*最后更新：2026-06-30 13:30 GMT+8*
