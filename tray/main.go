@@ -20,11 +20,8 @@ import (
 
 // ─── embedded icons ───
 
-//go:embed icon_online.png
-var iconOnlineData []byte
-
-//go:embed icon_offline.png
-var iconOfflineData []byte
+//go:embed icon.ico
+var iconData []byte
 
 // ─── config ───
 
@@ -37,7 +34,7 @@ type Config struct {
 
 func defaultConfig() Config {
 	return Config{
-		ServerExe: "l-asset-server.exe",
+		ServerExe: "l-asset.exe",
 		Port:      5678,
 	}
 }
@@ -74,6 +71,10 @@ func startServer(cfg Config, appDir string) error {
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("LASSET_PORT=%d", cfg.Port),
 	)
+	// Hide the console window on Windows
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	}
 
 	// Capture stdout/stderr to logs
 	logDir := filepath.Join(appDir, "logs")
@@ -101,17 +102,21 @@ func stopServer() error {
 		return fmt.Errorf("服务未运行")
 	}
 
-	// Try graceful shutdown first
-	cmd.Process.Signal(os.Signal(syscall.SIGINT))
+	pid := cmd.Process.Pid
 
-	// Force kill after a short wait
-	go func() {
-		ps, _ := cmd.Process.Wait()
-		_ = ps
-	}()
+	// On Windows, use taskkill for reliable termination
+	if runtime.GOOS == "windows" {
+		kill := exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid))
+		kill.Run()
+	} else {
+		cmd.Process.Signal(os.Signal(syscall.SIGTERM))
+	}
+
+	// Wait for process to exit
+	cmd.Process.Wait()
 
 	serverCmd.Store((*exec.Cmd)(nil))
-	log.Println("服务已停止")
+	log.Printf("服务已停止 (PID: %d)", pid)
 	return nil
 }
 
@@ -131,7 +136,7 @@ var (
 )
 
 func onReady() {
-	systray.SetIcon(iconOfflineData)
+	systray.SetIcon(iconData)
 	systray.SetTitle("L-Asset")
 	systray.SetTooltip("L-Asset 资产管理系统")
 
@@ -172,13 +177,13 @@ func onExit() {
 
 func updateStatus(running bool) {
 	if running {
-		systray.SetIcon(iconOnlineData)
+		systray.SetIcon(iconData)
 		menuStatus.SetTitle(fmt.Sprintf("🟢 运行中 (PID: %d)", serverPid()))
 		menuStart.Hide()
 		menuStop.Show()
 		menuRestart.Show()
 	} else {
-		systray.SetIcon(iconOfflineData)
+		systray.SetIcon(iconData)
 		menuStatus.SetTitle("⚪ 已停止")
 		menuStart.Show()
 		menuStop.Hide()

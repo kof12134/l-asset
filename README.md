@@ -66,38 +66,69 @@ Snipe-IT 是一个优秀的资产管理系统，但它的缺点在中小企业�
 
 ## 🚀 快速开始（Windows）
 
-### 方式一：双击运行（推荐）
+从 [Releases](https://github.com/kof12134/l-asset/releases) 下载 `l-asset-windows-x64.zip`，解压到一个文件夹。
 
-1. 下载 `output/l-asset.exe`
-2. 双击运行
-3. 浏览器打开 `http://localhost:5678`
-4. 默认管理员：`admin` / `admin123`
+> **一条原则：** 解压后 **不要移动 exe 文件**，始终在解压目录下运行。
 
-> 所有数据保存在 exe 同目录下的 `data/l-asset.db` 文件中。
+### 方式一：使用系统托盘（推荐，v1.1.0+）
 
-### 方式二：使用启动脚本（推荐）
+```
+l-asset/                  ← 解压目录
+├── l-asset-tray.exe      ← 托盘管理程序（新）
+├── l-asset.exe           ← 后端服务
+├── data/l-asset.db       ← 数据库
+└── tray-config.json      ← 托盘配置
+```
+
+1. 双击 **`l-asset-tray.exe`**
+2. 任务栏通知区域出现图标 🟢（绿色=运行，灰色=已停止）
+3. **右键点击图标** 操作：
+
+   | 菜单 | 功能 |
+   |------|------|
+   | 🌐 打开网页 | 浏览器打开管理界面 |
+   | ▶ 启动服务 | 启动后端，自动隐藏 DOS 窗口 |
+   | ⏹ 停止服务 | taskkill 中止后端 |
+   | 🔄 重启服务 | 停止 → 启动 |
+   | ⚙ 端口设置 | 用记事本编辑配置 |
+   | ❌ 退出 | 停止服务并退出托盘 |
+
+4. **开机自启**：右键 `l-asset-tray.exe` → 发送到 → 桌面快捷方式，然后把快捷方式复制到：
+   ```
+   按 Win+R → 输入 shell:startup → 回车 → 粘贴快捷方式
+   ```
+
+> 托盘程序会自动在同目录查找 `l-asset.exe`，端口默认 5678（可在 `tray-config.json` 修改）。
+
+### 方式二：使用启动脚本
 
 `output/` 目录包含两个启动脚本：
 
-- **`start.bat`** — 双击运行，后台启动服务并打开浏览器，窗口自动退出
-- **`start-silent.bat`** — 管理工具，菜单式启动/停止/查看状态
+- **`start.bat`** — 双击运行，后台启动服务并打开浏览器
+- **`start-silent.bat`** — 菜单式管理工具（启动/停止/状态）
 
-如需自定义端口或数据目录，编辑 `start.bat` 添加环境变量：
+### 方式三：纯命令行
+
 ```batch
+# 管理员/普通 cmd 均可
+l-asset.exe
+
+# 自定义端口
 set LASSET_PORT=8080
-set LASSET_DATA=D:\l-asset-data
-start "L-Asset" l-asset.exe
+l-asset.exe
 ```
+
+默认管理员：`admin` / `admin123`
 
 ---
 
 ## 🚀 快速开始（Linux / macOS / NAS）
 
-### 使用 Go 源码编译（推荐）
+### 从源码编译（推荐）
 
 ```bash
 # 需要 Go 1.21+
-git clone <仓库地址>
+ingit clone <仓库地址>
 cd l-asset
 
 # 编译
@@ -113,34 +144,72 @@ LASSET_PORT=3000 ./l-asset
 LASSET_DATA=/path/to/data ./l-asset
 ```
 
-### 使用预编译二进制（如果提供了 Release）
+### NAS 长期运行
 
 ```bash
-# 下载对应平台的可执行文件
-wget https://.../l-asset-linux-amd64
-chmod +x l-asset-linux-amd64
-./l-asset-linux-amd64
-```
-
-### NAS 部署（以飞牛 fnOS / 群晖为例）
-
-```bash
-# SSH 登录到 NAS
-# 上传二进制到 /volume1/docker/l-asset/
-# 直接运行
+# SSH 登录 NAS
 cd /volume1/docker/l-asset
-./l-asset &
 
-# 设置开机自启（通过 NAS 的任务计划）
-# 或用 nohup + screen 管理
+# 方式 A：nohup（最简单）
+nohup ./l-asset > l-asset.log 2>&1 &
+
+# 方式 B：screen（推荐，可随时查看日志）
+screen -S lasset        # 创建 session
+./l-asset               # 运行
+# Ctrl+A, D 断开
+screen -r lasset        # 重新连接
 ```
 
-> **提示：在 NAS 上长期运行时，建议使用 screen 或 tmux：**
-> ```bash
-> screen -S lasset
-> ./l-asset
-> # Ctrl+A+D 断开，screen -r lasset 重连
-> ```
+### Docker 部署（自建）
+
+L-Asset 代码本身是纯 Go，**零平台依赖**，可以轻松容器化。
+
+创建一个 `Dockerfile`：
+
+```dockerfile
+# 多阶段构建
+FROM golang:1.21-alpine AS builder
+
+WORKDIR /app
+COPY . .
+RUN go build -o l-asset .
+
+# 运行阶段
+FROM alpine:latest
+
+WORKDIR /app
+COPY --from=builder /app/l-asset .
+
+EXPOSE 5678
+VOLUME ["/app/data"]
+
+CMD ["./l-asset"]
+```
+
+配套 `docker-compose.yml`：
+
+```yaml
+version: "3"
+services:
+  l-asset:
+    build: .
+    ports:
+      - "5678:5678"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - LASSET_PORT=5678
+      - LASSET_DATA=/app/data
+    restart: unless-stopped
+```
+
+启动：
+
+```bash
+docker-compose up -d
+```
+
+> **原理说明：** `main.go` 不含任何平台特定代码，就是一个纯 HTTP 服务 + SQLite。Linux 下编译的二进制可直接在 Docker 容器中运行，数据通过 volume 持久化。
 
 ---
 
@@ -150,18 +219,18 @@ cd /volume1/docker/l-asset
 
 | 场景 | 推荐方式 |
 |------|----------|
-| IT 小白，只想用 | Windows 双击 start.bat |
-| 公司内网服务器 | Windows 双击 start.bat + 加入开机启动 |
-| 管理服务启停 | 双击 start-silent.bat 菜单工具 |
-| NAS 长期运行 | Linux 编译 + nohup |
-| 技术团队 | Docker 映射端口 + 数据卷 |
+| IT 小白，只想用 | Windows 托盘 `l-asset-tray.exe` |
+| 公司内网 Windows 服务器 | 托盘 + 开机自启 |
+| NAS / Linux 服务器 | 源码编译 + nohup / screen |
+| 有 Docker 环境 | 自建 Dockerfile + docker-compose |
+| 技术团队/PaaS | Docker 部署到 k8s 等平台 |
 
 ### 第二步：访问系统
 
 浏览器打开 `http://<服务器IP>:5678`
 
 - 同一局域网所有设备均可访问
-- 如果需要外网访问，配置路由器端口转发（**注意安全！建议配合 VPN 使用**）
+- 如需外网访问，配置端口转发（**强烈建议配合 VPN，不要直接暴露公网**）
 
 ### 第三步：初始设置
 

@@ -1,4 +1,4 @@
 {
-  "server_exe": "l-asset-server.exe",
+  "server_exe": "l-asset.exe",
   "port": 5678
 }
