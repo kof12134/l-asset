@@ -1627,9 +1627,27 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 
 	imported := 0
 	errors := []string{}
+	const maxErrors = 100 // cap error list to avoid huge response
 
 	// Get all custom fields for mapping
 	customFields := getCustomFieldMap()
+
+	// Wrap entire import in a transaction for atomicity
+	tx, err := db.Begin()
+	if err != nil {
+		logErr(w, "Internal server error", err, 500)
+		return
+	}
+	defer tx.Rollback()
+
+	// Auto-tag prefix (same logic as createAsset)
+	cfg := loadConfig()
+	company := cfg.CompanyName
+	if company == "" {
+		company = "PC"
+	}
+	var globalSeq int
+	tx.QueryRow("SELECT COALESCE(MAX(id), 0) FROM assets").Scan(&globalSeq)
 
 	for rowNum := 0; ; rowNum++ {
 		record, err := reader.Read()
@@ -1637,7 +1655,9 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("Row %d: %s", rowNum+2, err.Error()))
+			if len(errors) < maxErrors {
+				errors = append(errors, fmt.Sprintf("Row %d: CSV read error", rowNum+2))
+			}
 			continue
 		}
 
@@ -1656,9 +1676,8 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if vals["asset_tag"] == "" {
-			var count int
-			db.QueryRow("SELECT COUNT(*) FROM assets").Scan(&count)
-			vals["asset_tag"] = fmt.Sprintf("PC-%d", count+imported+1)
+			globalSeq++
+			vals["asset_tag"] = fmt.Sprintf("%s-%03d", company, globalSeq)
 		}
 		if vals["status"] == "" {
 			vals["status"] = "在库"
@@ -1666,13 +1685,16 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 
 		price, _ := strconv.ParseFloat(vals["purchase_price"], 64)
 
-		result, err := db.Exec(`INSERT INTO assets (asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		result, err := tx.Exec(`INSERT INTO assets (asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			vals["asset_tag"], vals["type"], vals["brand"], vals["model"], vals["serial"],
 			vals["cpu"], vals["memory"], vals["disk"], vals["status"],
 			vals["purchase_date"], price, vals["supplier"], vals["warranty_end"],
 			vals["current_user"], vals["location"], vals["notes"])
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("Row %d: %s", rowNum+2, err.Error()))
+			log.Printf("[ERROR] CSV row %d import failed: %v", rowNum+2, err)
+			if len(errors) < maxErrors {
+				errors = append(errors, fmt.Sprintf("Row %d: 导入失败，请检查资产编号是否重复或数据格式是否正确", rowNum+2))
+			}
 			continue
 		}
 
@@ -1680,12 +1702,21 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 
 		// Save custom values
 		for fieldID, val := range customVals {
-			db.Exec("INSERT INTO custom_field_values (asset_id, field_id, field_value) VALUES (?,?,?)", id, fieldID, val)
+			tx.Exec("INSERT INTO custom_field_values (asset_id, field_id, field_value) VALUES (?,?,?)", id, fieldID, val)
 		}
 
 		// Log
-		db.Exec("INSERT INTO transactions (asset_id, action, operator, notes, asset_tag) VALUES (?, 'create', 'import', 'CSV批量导入', ?)", id, vals["asset_tag"])
+		tx.Exec("INSERT INTO transactions (asset_id, action, operator, notes, asset_tag) VALUES (?, 'create', 'import', 'CSV批量导入', ?)", id, vals["asset_tag"])
 		imported++
+	}
+
+	if err := tx.Commit(); err != nil {
+		logErr(w, "提交事务失败", err, 500)
+		return
+	}
+
+	if len(errors) >= maxErrors {
+		errors = append(errors, fmt.Sprintf("... and more errors (limited to %d)", maxErrors))
 	}
 
 	jsonResp(w, map[string]interface{}{
@@ -1974,11 +2005,17 @@ func calcDepreciation(price float64, pdate string, method string, now time.Time)
 	}
 	var pastMonths int
 	if pdate != "" {
-		pt, err := time.Parse("2006-01-02", pdate[:10])
-		if err == nil {
-			pastMonths = int(now.Sub(pt).Hours() / (30.44 * 24))
-			if pastMonths < 0 {
-				pastMonths = 0
+		dateStr := pdate
+		if len(dateStr) > 10 {
+			dateStr = dateStr[:10]
+		}
+		if len(dateStr) >= 10 {
+			pt, err := time.Parse("2006-01-02", dateStr)
+			if err == nil {
+				pastMonths = int(now.Sub(pt).Hours() / (30.44 * 24))
+				if pastMonths < 0 {
+					pastMonths = 0
+				}
 			}
 		}
 	}
@@ -1992,10 +2029,20 @@ func calcDepreciation(price float64, pdate string, method string, now time.Time)
 		if deprMonths > 120 { deprMonths = 120 }
 		monthlyDepr = price / 120.0
 	case "dbl-declining-5y":
-		yearlyRate := 2.0 / 5.0
+		yearlyRate := 2.0 / 5.0 // 40% annual declining balance
 		years := pastMonths / 12
+		monthsInYear := pastMonths % 12
 		deprMonths = pastMonths
+		if deprMonths > 60 { deprMonths = 60 }
+
+		// Calculate book value at start of current year
+		book := price
+		for y := 0; y < years && y < 3; y++ {
+			book *= (1.0 - yearlyRate)
+		}
+
 		if years >= 3 {
+			// Straight-line over remaining 2 years
 			residual := price
 			for i := 0; i < 3; i++ {
 				residual *= (1.0 - yearlyRate)
@@ -2003,13 +2050,30 @@ func calcDepreciation(price float64, pdate string, method string, now time.Time)
 			monthlyDepr = residual / 24.0
 			remaining := pastMonths - 36
 			if remaining < 0 { remaining = 0 }
+			if remaining > 24 { remaining = 24 }
 			totalDepr = price - residual + monthlyDepr*float64(remaining)
 			if totalDepr > price { totalDepr = price }
 			curValue = price - totalDepr
 			if curValue < 0 { curValue = 0 }
 			return
 		}
-		monthlyDepr = price * yearlyRate / 12.0
+
+		// Declining balance: monthly rate based on current year's book value
+		monthlyDepr = book * yearlyRate / 12.0
+
+		// Total depreciation accumulated
+		totalDepr = 0.0
+		b := price
+		for y := 0; y < years; y++ {
+			totalDepr += b * yearlyRate
+			b *= (1.0 - yearlyRate)
+		}
+		totalDepr += b * yearlyRate * float64(monthsInYear) / 12.0
+
+		if totalDepr > price { totalDepr = price }
+		curValue = price - totalDepr
+		if curValue < 0 { curValue = 0 }
+		return
 	case "sum-years-5y":
 		deprMonths = pastMonths
 		if deprMonths > 60 { deprMonths = 60 }
@@ -2050,7 +2114,7 @@ func handleFinanceSummary(w http.ResponseWriter, r *http.Request) {
 		TotalDepr      float64 `json:"total_depreciation"`
 		DeprMonths     int     `json:"depreciation_months"`
 	}
-	rows, err := db.Query(`SELECT id, asset_tag, type, brand, model, serial, status, purchase_price, purchase_date FROM assets WHERE purchase_price > 0 ORDER BY type, asset_tag`)
+	rows, err := db.Query(`SELECT id, asset_tag, type, brand, model, serial, status, purchase_price, purchase_date FROM assets WHERE purchase_price > 0 UNION ALL SELECT id, asset_tag, type, brand, model, serial, status, purchase_price, purchase_date FROM scrapped_assets WHERE purchase_price > 0 ORDER BY type, asset_tag`)
 	if err != nil {
 		logErr(w, "Internal server error", err, 500)
 		return
@@ -2767,6 +2831,8 @@ func handleUserBatch(w http.ResponseWriter, r *http.Request) {
 			if id == adminID {
 				continue
 			}
+			// Clear asset references before deleting user
+			db.Exec("UPDATE assets SET current_user='', status='在库', updated_at=datetime('now','localtime') WHERE current_user=(SELECT name FROM users WHERE id=?)", id)
 			db.Exec("DELETE FROM users WHERE id=?", id)
 		}
 		jsonResp(w, map[string]string{"status": "ok"})
@@ -2893,7 +2959,7 @@ func handleUserAssets(w http.ResponseWriter, r *http.Request, uid int) {
 		assets = append(assets, a)
 	}
 
-	json.NewEncoder(w).Encode(assets)
+	jsonResp(w, assets)
 }
 
 func operatorName(r *http.Request) string {
