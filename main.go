@@ -22,10 +22,12 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -56,6 +58,7 @@ type ScrappedAsset struct {
 	ScrappedBy    string  `json:"scrapped_by"`
 	ScrappedAt    string  `json:"scrapped_at"`
 	RestoredAt    string  `json:"restored_at"`
+	CustomValues string  `json:"custom_values,omitempty"`
 	CreatedAt     string  `json:"created_at"`
 	UpdatedAt     string  `json:"updated_at"`
 }
@@ -299,7 +302,23 @@ func main() {
 
 	log.Printf("L-Asset started on http://0.0.0.0:%s", port)
 	log.Printf("Database: %s", dbPath)
-	log.Fatal(http.ListenAndServe("0.0.0.0:"+port, mux))
+
+	// Graceful shutdown
+	srv := &http.Server{Addr: "0.0.0.0:" + port, Handler: mux}
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+		<-quit
+		log.Println("Shutting down L-Asset...")
+		if db != nil {
+			db.Close()
+		}
+		srv.Close()
+	}()
+
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatalf("Server error: %v", err)
+	}
 }
 
 // ─── Database init ───
@@ -416,6 +435,18 @@ func initDB() {
 	}
 }
 
+func addColumnIfMissing(table, column, definition string) {
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", table, column).Scan(&count)
+	if count > 0 {
+		return
+	}
+	_, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+	if err != nil {
+		log.Printf("⚠️ Failed to add column %s.%s: %v", table, column, err)
+	}
+}
+
 func ensureDefaults() {
 	// Make sure default custom fields exist
 	defaults := []struct {
@@ -434,9 +465,10 @@ func ensureDefaults() {
 	}
 
 	// Ensure users table has password and role columns (migration for existing DBs)
-	db.Exec("ALTER TABLE users ADD COLUMN password TEXT DEFAULT ''")
-	db.Exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
-	db.Exec("ALTER TABLE field_presets ADD COLUMN abbr TEXT DEFAULT ''")
+	addColumnIfMissing("users", "password", "TEXT DEFAULT ''")
+	addColumnIfMissing("users", "role", "TEXT DEFAULT 'user'")
+	addColumnIfMissing("field_presets", "abbr", "TEXT DEFAULT ''")
+	addColumnIfMissing("scrapped_assets", "custom_values", "TEXT DEFAULT ''")
 
 	// If no users exist, create default admin
 	var userCount int
@@ -538,6 +570,11 @@ func jsonErr(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func logErr(w http.ResponseWriter, msg string, err error, code int) {
+	log.Printf("[ERROR] %s: %v", msg, err)
+	jsonErr(w, msg, code)
 }
 
 // ─── Page Handlers ───
@@ -870,7 +907,7 @@ func listAssets(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer rows.Close()
@@ -902,7 +939,7 @@ func listAssets(w http.ResponseWriter, r *http.Request) {
 func createAsset(w http.ResponseWriter, r *http.Request) {
 	var a Asset
 	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
-		jsonErr(w, "Invalid JSON: "+err.Error(), 400)
+		logErr(w, "Invalid JSON", err, 400)
 		return
 	}
 
@@ -925,9 +962,17 @@ func createAsset(w http.ResponseWriter, r *http.Request) {
 		}
 		prefix := fmt.Sprintf("%s-%s-", company, abbr)
 		pattern := prefix + "%"
+
+		// Use a transaction to avoid race conditions on auto-numbering
+		tx, err := db.Begin()
+		if err != nil {
+			logErr(w, "Internal server error", err, 500)
+			return
+		}
 		var maxSeq int
-		db.QueryRow("SELECT COALESCE(MAX(CAST(SUBSTR(asset_tag, ?) AS INTEGER)), 0) FROM assets WHERE asset_tag LIKE ?", len(prefix)+1, pattern).Scan(&maxSeq)
+		tx.QueryRow("SELECT COALESCE(MAX(CAST(SUBSTR(asset_tag, ?) AS INTEGER)), 0) FROM assets WHERE asset_tag LIKE ?", len(prefix)+1, pattern).Scan(&maxSeq)
 		a.AssetTag = fmt.Sprintf("%s%03d", prefix, maxSeq+1)
+		tx.Commit()
 	}
 	// Auto-set status based on current_user (override whatever frontend sent)
 	if a.CurrentUser != "" {
@@ -939,12 +984,20 @@ func createAsset(w http.ResponseWriter, r *http.Request) {
 	result, err := db.Exec(`INSERT INTO assets (asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		a.AssetTag, a.Type, a.Brand, a.Model, a.Serial, a.CPU, a.Memory, a.Disk, a.Status, a.PurchaseDate, a.PurchasePrice, a.Supplier, a.WarrantyEnd, a.CurrentUser, a.Location, a.Notes)
 	if err != nil {
-		jsonErr(w, err.Error(), 400)
+		logErr(w, "Request failed", err, 400)
 		return
 	}
 
 	id, _ := result.LastInsertId()
 	a.ID = int(id)
+
+	// Save custom values
+	if a.CustomValues != nil {
+		for _, cv := range a.CustomValues {
+			db.Exec(`INSERT INTO custom_field_values (asset_id, field_id, field_value) VALUES (?,?,?) ON CONFLICT(asset_id, field_id) DO UPDATE SET field_value=?`,
+				id, cv.FieldID, cv.FieldValue, cv.FieldValue)
+		}
+	}
 
 	// Log transaction
 	db.Exec("INSERT INTO transactions (asset_id, action, operator, notes, asset_tag) VALUES (?, 'create', ?, '资产入库', ?)",
@@ -1000,7 +1053,7 @@ func getAsset(w http.ResponseWriter, id int) {
 		return
 	}
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 
@@ -1029,7 +1082,7 @@ func getAsset(w http.ResponseWriter, id int) {
 func updateAsset(w http.ResponseWriter, r *http.Request, id int) {
 	var a Asset
 	if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
-		jsonErr(w, "Invalid JSON: "+err.Error(), 400)
+		logErr(w, "Invalid JSON", err, 400)
 		return
 	}
 
@@ -1049,7 +1102,7 @@ func updateAsset(w http.ResponseWriter, r *http.Request, id int) {
 	_, err := db.Exec(`UPDATE assets SET asset_tag=?, type=?, brand=?, model=?, serial=?, cpu=?, memory=?, disk=?, purchase_date=?, purchase_price=?, supplier=?, warranty_end=?, status=?, current_user=?, location=?, notes=?, updated_at=datetime('now','localtime') WHERE id=?`,
 		a.AssetTag, a.Type, a.Brand, a.Model, a.Serial, a.CPU, a.Memory, a.Disk, a.PurchaseDate, a.PurchasePrice, a.Supplier, a.WarrantyEnd, newStatus, a.CurrentUser, a.Location, a.Notes, id)
 	if err != nil {
-		jsonErr(w, err.Error(), 400)
+		logErr(w, "Request failed", err, 400)
 		return
 	}
 
@@ -1068,6 +1121,22 @@ func deleteAsset(w http.ResponseWriter, id int) {
 	// Get asset tag for log
 	var tag string
 	db.QueryRow("SELECT asset_tag FROM assets WHERE id=?", id).Scan(&tag)
+
+	// Get attachment file paths before cascade delete
+	rows, err := db.Query("SELECT file_path FROM attachments WHERE asset_id=?", id)
+	if err == nil {
+		var paths []string
+		for rows.Next() {
+			var p string
+			rows.Scan(&p)
+			paths = append(paths, p)
+		}
+		rows.Close()
+		uploadsDir := filepath.Join(appDataDir, "uploads")
+		for _, p := range paths {
+			os.Remove(filepath.Join(uploadsDir, p))
+		}
+	}
 
 	db.Exec("DELETE FROM assets WHERE id=?", id)
 	db.Exec("INSERT INTO transactions (asset_id, action, operator, notes, asset_tag) VALUES (?, 'delete', 'system', '资产已删除', ?)", id, tag)
@@ -1131,34 +1200,48 @@ func assetAction(w http.ResponseWriter, r *http.Request, action string) {
 		// Move asset to scrapped_assets table (transactional)
 		tx, err := db.Begin()
 		if err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 		defer tx.Rollback()
+
+		// Collect custom field values before cascade delete
+		type cvRow struct{ FieldID int; FieldName string; FieldValue string }
+		var customVals []cvRow
+		cvRows, _ := tx.Query("SELECT cv.field_id, cf.field_name, cv.field_value FROM custom_field_values cv JOIN custom_fields cf ON cv.field_id=cf.id WHERE cv.asset_id=?", id)
+		if cvRows != nil {
+			for cvRows.Next() {
+				var cv cvRow
+				cvRows.Scan(&cv.FieldID, &cv.FieldName, &cv.FieldValue)
+				customVals = append(customVals, cv)
+			}
+			cvRows.Close()
+		}
+		customJSON, _ := json.Marshal(customVals)
 
 		// Read full asset
 		var a Asset
 		err = tx.QueryRow(`SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, created_at, updated_at FROM assets WHERE id=?`, id).
 			Scan(&a.ID, &a.AssetTag, &a.Type, &a.Brand, &a.Model, &a.Serial, &a.CPU, &a.Memory, &a.Disk, &a.Status, &a.PurchaseDate, &a.PurchasePrice, &a.Supplier, &a.WarrantyEnd, &a.CurrentUser, &a.Location, &a.Notes, &a.CreatedAt, &a.UpdatedAt)
 		if err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 
-		// Insert into scrapped_assets
-		_, err = tx.Exec(`INSERT INTO scrapped_assets (asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		// Insert into scrapped_assets with custom_values
+		_, err = tx.Exec(`INSERT INTO scrapped_assets (asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, created_at, updated_at, custom_values) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			a.AssetTag, a.Type, a.Brand, a.Model, a.Serial, a.CPU, a.Memory, a.Disk, "已报废",
 			a.PurchaseDate, a.PurchasePrice, a.Supplier, a.WarrantyEnd, a.CurrentUser, a.Location, a.Notes,
-			body.Reason, body.Notes, body.Operator, a.CreatedAt, a.UpdatedAt)
+			body.Reason, body.Notes, body.Operator, a.CreatedAt, a.UpdatedAt, string(customJSON))
 		if err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 
 		// Delete from assets
 		_, err = tx.Exec("DELETE FROM assets WHERE id=?", id)
 		if err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 
@@ -1166,12 +1249,12 @@ func assetAction(w http.ResponseWriter, r *http.Request, action string) {
 		_, err = tx.Exec("INSERT INTO transactions (asset_id, action, operator, target_user, notes, asset_tag) VALUES (?,?,?,?,?,?)",
 			id, logAction, body.Operator, body.TargetUser, body.Notes, a.AssetTag)
 		if err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 
 		if err := tx.Commit(); err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 
@@ -1199,7 +1282,7 @@ func assetAction(w http.ResponseWriter, r *http.Request, action string) {
 
 	_, err = db.Exec("UPDATE assets SET status=?, current_user=?, updated_at=datetime('now','localtime') WHERE id=?", newStatus, body.TargetUser, id)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 
@@ -1233,7 +1316,7 @@ func handleBatchAction(w http.ResponseWriter, r *http.Request) {
 		Reason     string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonErr(w, "Invalid JSON: "+err.Error(), 400)
+		logErr(w, "Invalid JSON", err, 400)
 		return
 	}
 	if len(body.IDs) == 0 {
@@ -1263,13 +1346,27 @@ func handleBatchAction(w http.ResponseWriter, r *http.Request) {
 		// Batch scrap: move assets to scrapped_assets table
 		tx, err := db.Begin()
 		if err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 		defer tx.Rollback()
 
 		affected := 0
 		for _, id := range body.IDs {
+			// Collect custom field values before cascade delete
+			type cvRow struct{ FieldID int; FieldName string; FieldValue string }
+			var customVals []cvRow
+			cvRows, _ := tx.Query("SELECT cv.field_id, cf.field_name, cv.field_value FROM custom_field_values cv JOIN custom_fields cf ON cv.field_id=cf.id WHERE cv.asset_id=?", id)
+			if cvRows != nil {
+				for cvRows.Next() {
+					var cv cvRow
+					cvRows.Scan(&cv.FieldID, &cv.FieldName, &cv.FieldValue)
+					customVals = append(customVals, cv)
+				}
+				cvRows.Close()
+			}
+			customJSON, _ := json.Marshal(customVals)
+
 			var a Asset
 			err := tx.QueryRow(`SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, created_at, updated_at FROM assets WHERE id=?`, id).
 				Scan(&a.ID, &a.AssetTag, &a.Type, &a.Brand, &a.Model, &a.Serial, &a.CPU, &a.Memory, &a.Disk, &a.Status, &a.PurchaseDate, &a.PurchasePrice, &a.Supplier, &a.WarrantyEnd, &a.CurrentUser, &a.Location, &a.Notes, &a.CreatedAt, &a.UpdatedAt)
@@ -1277,10 +1374,10 @@ func handleBatchAction(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			_, err = tx.Exec(`INSERT INTO scrapped_assets (asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			_, err = tx.Exec(`INSERT INTO scrapped_assets (asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, created_at, updated_at, custom_values) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 				a.AssetTag, a.Type, a.Brand, a.Model, a.Serial, a.CPU, a.Memory, a.Disk, "已报废",
 				a.PurchaseDate, a.PurchasePrice, a.Supplier, a.WarrantyEnd, a.CurrentUser, a.Location, a.Notes,
-				body.Reason, body.Notes, body.Operator, a.CreatedAt, a.UpdatedAt)
+				body.Reason, body.Notes, body.Operator, a.CreatedAt, a.UpdatedAt, string(customJSON))
 			if err != nil {
 				continue
 			}
@@ -1296,7 +1393,7 @@ func handleBatchAction(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := tx.Commit(); err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 
@@ -1306,6 +1403,22 @@ func handleBatchAction(w http.ResponseWriter, r *http.Request) {
 			"new_status": "已报废",
 		})
 		return
+	}
+
+	// Batch checkout: verify assets are available
+	if action == "checkout" {
+		in_placeholders := make([]string, len(body.IDs))
+		in_args := make([]interface{}, len(body.IDs))
+		for i, id := range body.IDs {
+			in_placeholders[i] = "?"
+			in_args[i] = id
+		}
+		var blocked int
+		db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM assets WHERE id IN (%s) AND status != '在库'", strings.Join(in_placeholders, ",")), in_args...).Scan(&blocked)
+		if blocked > 0 {
+			jsonErr(w, fmt.Sprintf("有 %d 个资产不是'在库'状态，无法批量领用", blocked), 400)
+			return
+		}
 	}
 
 	// Build placeholders for IN clause
@@ -1319,7 +1432,7 @@ func handleBatchAction(w http.ResponseWriter, r *http.Request) {
 	// Get asset tags for transaction log
 	rows, err := db.Query(fmt.Sprintf("SELECT id, asset_tag FROM assets WHERE id IN (%s)", strings.Join(placeholders, ",")), args...)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	type idTag struct{ id int; tag string }
@@ -1340,7 +1453,7 @@ func handleBatchAction(w http.ResponseWriter, r *http.Request) {
 			append([]interface{}{newStatus}, args...)...)
 	}
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 
@@ -1374,7 +1487,7 @@ func handleBatchDelete(w http.ResponseWriter, r *http.Request) {
 		Confirm string `json:"confirm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonErr(w, "Invalid JSON: "+err.Error(), 400)
+		logErr(w, "Invalid JSON", err, 400)
 		return
 	}
 	if len(body.IDs) == 0 {
@@ -1396,7 +1509,7 @@ func handleBatchDelete(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.Query(fmt.Sprintf("SELECT id, asset_tag FROM assets WHERE id IN (%s)", strings.Join(placeholders, ",")), args...)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	var tags []struct{ id int; tag string }
@@ -1407,9 +1520,25 @@ func handleBatchDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 
+	// Get attachment file paths before cascade delete
+	attRows, err := db.Query(fmt.Sprintf("SELECT file_path FROM attachments WHERE asset_id IN (%s)", strings.Join(placeholders, ",")), args...)
+	if err == nil {
+		var attPaths []string
+		for attRows.Next() {
+			var p string
+			attRows.Scan(&p)
+			attPaths = append(attPaths, p)
+		}
+		attRows.Close()
+		uploadsDir := filepath.Join(appDataDir, "uploads")
+		for _, p := range attPaths {
+			os.Remove(filepath.Join(uploadsDir, p))
+		}
+	}
+
 	_, err = db.Exec(fmt.Sprintf("DELETE FROM assets WHERE id IN (%s)", strings.Join(placeholders, ",")), args...)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 
@@ -1441,13 +1570,13 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 	// Parse multipart form
 	err := r.ParseMultipartForm(32 << 20) // 32MB
 	if err != nil {
-		jsonErr(w, "Parse error: "+err.Error(), 400)
+		logErr(w, "Parse error", err, 400)
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		jsonErr(w, "File required: "+err.Error(), 400)
+		logErr(w, "File required", err, 400)
 		return
 	}
 	defer file.Close()
@@ -1455,7 +1584,7 @@ func handleBatchImport(w http.ResponseWriter, r *http.Request) {
 	reader := csv.NewReader(file)
 	headers, err := reader.Read()
 	if err != nil {
-		jsonErr(w, "CSV read error: "+err.Error(), 400)
+		logErr(w, "CSV read error", err, 400)
 		return
 	}
 
@@ -1644,7 +1773,7 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 	{
 		assetRows, err := db.Query("SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, created_at FROM assets WHERE status != '已报废' ORDER BY id")
 		if err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 		for assetRows.Next() {
@@ -1704,7 +1833,7 @@ func handleTransactions(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.Query("SELECT id, asset_id, action, operator, target_user, notes, created_at, asset_tag FROM transactions ORDER BY id DESC LIMIT ? OFFSET ?", pageSize, offset)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer rows.Close()
@@ -1744,7 +1873,7 @@ func handleCustomFields(w http.ResponseWriter, r *http.Request) {
 func listCustomFields(w http.ResponseWriter) {
 	rows, err := db.Query("SELECT id, field_name, field_type, field_options, sort_order FROM custom_fields ORDER BY sort_order, id")
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer rows.Close()
@@ -1775,7 +1904,7 @@ func createCustomField(w http.ResponseWriter, r *http.Request) {
 	_, err := db.Exec("INSERT INTO custom_fields (field_name, field_type, field_options, sort_order) VALUES (?,?,?,?)",
 		f.FieldName, f.FieldType, f.Options, f.SortOrder)
 	if err != nil {
-		jsonErr(w, err.Error(), 400)
+		logErr(w, "Request failed", err, 400)
 		return
 	}
 
@@ -1923,7 +2052,7 @@ func handleFinanceSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := db.Query(`SELECT id, asset_tag, type, brand, model, serial, status, purchase_price, purchase_date FROM assets WHERE purchase_price > 0 ORDER BY type, asset_tag`)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer rows.Close()
@@ -2019,12 +2148,12 @@ func listScrapped(w http.ResponseWriter, r *http.Request) {
 	db.QueryRow(countQuery, args...).Scan(&total)
 
 	offset := (page - 1) * pageSize
-	query := fmt.Sprintf("SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at FROM scrapped_assets WHERE %s ORDER BY scrapped_at DESC LIMIT ? OFFSET ?", whereClause)
+	query := fmt.Sprintf("SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, COALESCE(custom_values,''), created_at, updated_at FROM scrapped_assets WHERE %s ORDER BY scrapped_at DESC LIMIT ? OFFSET ?", whereClause)
 	args = append(args, pageSize, offset)
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer rows.Close()
@@ -2032,7 +2161,7 @@ func listScrapped(w http.ResponseWriter, r *http.Request) {
 	assets := []ScrappedAsset{}
 	for rows.Next() {
 		var a ScrappedAsset
-		rows.Scan(&a.ID, &a.AssetTag, &a.Type, &a.Brand, &a.Model, &a.Serial, &a.CPU, &a.Memory, &a.Disk, &a.Status, &a.PurchaseDate, &a.PurchasePrice, &a.Supplier, &a.WarrantyEnd, &a.CurrentUser, &a.Location, &a.Notes, &a.ScrapReason, &a.ScrapNotes, &a.ScrappedBy, &a.ScrappedAt, &a.RestoredAt, &a.CreatedAt, &a.UpdatedAt)
+		rows.Scan(&a.ID, &a.AssetTag, &a.Type, &a.Brand, &a.Model, &a.Serial, &a.CPU, &a.Memory, &a.Disk, &a.Status, &a.PurchaseDate, &a.PurchasePrice, &a.Supplier, &a.WarrantyEnd, &a.CurrentUser, &a.Location, &a.Notes, &a.ScrapReason, &a.ScrapNotes, &a.ScrappedBy, &a.ScrappedAt, &a.RestoredAt, &a.CustomValues, &a.CreatedAt, &a.UpdatedAt)
 		assets = append(assets, a)
 	}
 
@@ -2074,14 +2203,14 @@ func handleScrappedByID(w http.ResponseWriter, r *http.Request) {
 
 func getScrapped(w http.ResponseWriter, id int) {
 	var a ScrappedAsset
-	err := db.QueryRow(`SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at FROM scrapped_assets WHERE id=?`, id).
-		Scan(&a.ID, &a.AssetTag, &a.Type, &a.Brand, &a.Model, &a.Serial, &a.CPU, &a.Memory, &a.Disk, &a.Status, &a.PurchaseDate, &a.PurchasePrice, &a.Supplier, &a.WarrantyEnd, &a.CurrentUser, &a.Location, &a.Notes, &a.ScrapReason, &a.ScrapNotes, &a.ScrappedBy, &a.ScrappedAt, &a.RestoredAt, &a.CreatedAt, &a.UpdatedAt)
+	err := db.QueryRow(`SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, COALESCE(custom_values,''), created_at, updated_at FROM scrapped_assets WHERE id=?`, id).
+		Scan(&a.ID, &a.AssetTag, &a.Type, &a.Brand, &a.Model, &a.Serial, &a.CPU, &a.Memory, &a.Disk, &a.Status, &a.PurchaseDate, &a.PurchasePrice, &a.Supplier, &a.WarrantyEnd, &a.CurrentUser, &a.Location, &a.Notes, &a.ScrapReason, &a.ScrapNotes, &a.ScrappedBy, &a.ScrappedAt, &a.RestoredAt, &a.CustomValues, &a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		jsonErr(w, "Scrapped asset not found", 404)
 		return
 	}
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	jsonResp(w, a)
@@ -2093,7 +2222,7 @@ func updateScrapped(w http.ResponseWriter, r *http.Request, id int) {
 		ScrapNotes string `json:"scrap_notes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonErr(w, "Invalid JSON: "+err.Error(), 400)
+		logErr(w, "Invalid JSON", err, 400)
 		return
 	}
 
@@ -2137,15 +2266,16 @@ func scrappedRestore(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := db.Begin()
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer tx.Rollback()
 
-	// Read scrapped asset
+	// Read scrapped asset (including custom values)
 	var a ScrappedAsset
-	err = tx.QueryRow(`SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at FROM scrapped_assets WHERE id=?`, id).
-		Scan(&a.ID, &a.AssetTag, &a.Type, &a.Brand, &a.Model, &a.Serial, &a.CPU, &a.Memory, &a.Disk, &a.Status, &a.PurchaseDate, &a.PurchasePrice, &a.Supplier, &a.WarrantyEnd, &a.CurrentUser, &a.Location, &a.Notes, &a.ScrapReason, &a.ScrapNotes, &a.ScrappedBy, &a.ScrappedAt, &a.RestoredAt, &a.CreatedAt, &a.UpdatedAt)
+	var customJSON string
+	err = tx.QueryRow(`SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at, COALESCE(custom_values,'') FROM scrapped_assets WHERE id=?`, id).
+		Scan(&a.ID, &a.AssetTag, &a.Type, &a.Brand, &a.Model, &a.Serial, &a.CPU, &a.Memory, &a.Disk, &a.Status, &a.PurchaseDate, &a.PurchasePrice, &a.Supplier, &a.WarrantyEnd, &a.CurrentUser, &a.Location, &a.Notes, &a.ScrapReason, &a.ScrapNotes, &a.ScrappedBy, &a.ScrappedAt, &a.RestoredAt, &a.CreatedAt, &a.UpdatedAt, &customJSON)
 	if err != nil {
 		jsonErr(w, "Scrapped asset not found", 404)
 		return
@@ -2157,15 +2287,32 @@ func scrappedRestore(w http.ResponseWriter, r *http.Request) {
 		a.PurchaseDate, a.PurchasePrice, a.Supplier, a.WarrantyEnd, a.CurrentUser, a.Location, a.Notes,
 		a.CreatedAt, time.Now().Format("2006-01-02 15:04:05"))
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	newAssetID, _ := res.LastInsertId()
 
+	// Restore custom field values
+	if customJSON != "" {
+		type cvRow struct{ FieldID int; FieldName string; FieldValue string }
+		var cvs []cvRow
+		if json.Unmarshal([]byte(customJSON), &cvs) == nil {
+			for _, cv := range cvs {
+				// Verify field still exists
+				var exists int
+				tx.QueryRow("SELECT COUNT(*) FROM custom_fields WHERE id=? AND field_name=?", cv.FieldID, cv.FieldName).Scan(&exists)
+				if exists > 0 {
+					tx.Exec("INSERT INTO custom_field_values (asset_id, field_id, field_value) VALUES (?,?,?) ON CONFLICT(asset_id, field_id) DO UPDATE SET field_value=?",
+						newAssetID, cv.FieldID, cv.FieldValue, cv.FieldValue)
+				}
+			}
+		}
+	}
+
 	// Delete from scrapped_assets
 	_, err = tx.Exec("DELETE FROM scrapped_assets WHERE id=?", id)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 
@@ -2178,7 +2325,7 @@ func scrappedRestore(w http.ResponseWriter, r *http.Request) {
 		newAssetID, body.Operator, restoreNotes, a.AssetTag)
 
 	if err := tx.Commit(); err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 
@@ -2197,7 +2344,7 @@ func handleFieldPresets(w http.ResponseWriter, r *http.Request) {
 		}
 		rows, err := db.Query("SELECT id, field_key, field_value, sort_order, COALESCE(abbr,'') FROM field_presets WHERE field_key=? ORDER BY sort_order, id", fieldKey)
 		if err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 		defer rows.Close()
@@ -2232,7 +2379,7 @@ func handleFieldPresets(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err := db.Exec("INSERT INTO field_presets (field_key, field_value, abbr) VALUES (?,?,?)", body.FieldKey, body.FieldValue, body.Abbr)
 		if err != nil {
-			jsonErr(w, err.Error(), 400)
+			logErr(w, "Request failed", err, 400)
 			return
 		}
 		jsonResp(w, map[string]string{"status": "ok"})
@@ -2253,7 +2400,7 @@ func handleFieldPresets(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err := db.Exec("UPDATE field_presets SET field_value=?, abbr=? WHERE id=?", body.FieldValue, body.Abbr, body.ID)
 		if err != nil {
-			jsonErr(w, err.Error(), 400)
+			logErr(w, "Request failed", err, 400)
 			return
 		}
 		jsonResp(w, map[string]string{"status": "ok"})
@@ -2319,12 +2466,13 @@ func handleDefaultFields(w http.ResponseWriter, r *http.Request) {
 
 func handleUsers(w http.ResponseWriter, r *http.Request) {
 	s := getSession(r)
-	// Need admin for user management
-	if r.Method == "POST" || r.Method == "DELETE" || r.Method == "PUT" {
-		if s == nil || s.Role != "admin" {
+	if s == nil || s.Role != "admin" {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
 			jsonErr(w, "Forbidden", 403)
-			return
+		} else {
+			http.Error(w, "Forbidden", 403)
 		}
+		return
 	}
 
 	if r.Method == "GET" {
@@ -2346,7 +2494,7 @@ func listUsers(w http.ResponseWriter, r *http.Request) {
 		rows, err = db.Query("SELECT id, name, department, phone, email, password, role, notes, active, created_at FROM users ORDER BY name")
 	}
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer rows.Close()
@@ -2372,7 +2520,7 @@ func createUser(w http.ResponseWriter, r *http.Request, s *Session) {
 		Notes      string `json:"notes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, "Invalid JSON: "+err.Error(), 400)
+		logErr(w, "Invalid JSON", err, 400)
 		return
 	}
 	if req.Name == "" {
@@ -2392,7 +2540,7 @@ func createUser(w http.ResponseWriter, r *http.Request, s *Session) {
 	result, err := db.Exec("INSERT INTO users (name, department, phone, email, password, role, notes) VALUES (?,?,?,?,?,?,?)",
 		req.Name, req.Department, req.Phone, req.Email, pwdHash, role, req.Notes)
 	if err != nil {
-		jsonErr(w, err.Error(), 400)
+		logErr(w, "Request failed", err, 400)
 		return
 	}
 
@@ -2477,7 +2625,7 @@ func getUser(w http.ResponseWriter, id int) {
 		return
 	}
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	u.Password = ""
@@ -2496,7 +2644,7 @@ func updateUser(w http.ResponseWriter, r *http.Request, id int, s *Session) {
 		Active     int    `json:"active"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonErr(w, "Invalid JSON: "+err.Error(), 400)
+		logErr(w, "Invalid JSON", err, 400)
 		return
 	}
 	if req.Name == "" {
@@ -2518,14 +2666,14 @@ func updateUser(w http.ResponseWriter, r *http.Request, id int, s *Session) {
 			_, err := db.Exec("UPDATE users SET name=?, department=?, phone=?, email=?, password=?, role=?, notes=?, active=? WHERE id=?",
 				req.Name, req.Department, req.Phone, req.Email, pwdHash, currentRole, req.Notes, req.Active, id)
 			if err != nil {
-				jsonErr(w, err.Error(), 400)
+				logErr(w, "Request failed", err, 400)
 				return
 			}
 		} else {
 			_, err := db.Exec("UPDATE users SET name=?, department=?, phone=?, email=?, role=?, notes=?, active=? WHERE id=?",
 				req.Name, req.Department, req.Phone, req.Email, currentRole, req.Notes, req.Active, id)
 			if err != nil {
-				jsonErr(w, err.Error(), 400)
+				logErr(w, "Request failed", err, 400)
 				return
 			}
 		}
@@ -2536,14 +2684,14 @@ func updateUser(w http.ResponseWriter, r *http.Request, id int, s *Session) {
 			_, err := db.Exec("UPDATE users SET name=?, department=?, phone=?, email=?, password=? WHERE id=?",
 				req.Name, req.Department, req.Phone, req.Email, pwdHash, id)
 			if err != nil {
-				jsonErr(w, err.Error(), 400)
+				logErr(w, "Request failed", err, 400)
 				return
 			}
 		} else {
 			_, err := db.Exec("UPDATE users SET name=?, department=?, phone=?, email=? WHERE id=?",
 				req.Name, req.Department, req.Phone, req.Email, id)
 			if err != nil {
-				jsonErr(w, err.Error(), 400)
+				logErr(w, "Request failed", err, 400)
 				return
 			}
 		}
@@ -2561,7 +2709,7 @@ func deleteUser(w http.ResponseWriter, id int) {
 	}
 	_, err := db.Exec("DELETE FROM users WHERE id=?", id)
 	if err != nil {
-		jsonErr(w, err.Error(), 400)
+		logErr(w, "Request failed", err, 400)
 		return
 	}
 	jsonResp(w, map[string]string{"status": "ok"})
@@ -2686,7 +2834,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := saveConfig(cfg); err != nil {
-			jsonErr(w, err.Error(), 500)
+			logErr(w, "Internal server error", err, 500)
 			return
 		}
 		jsonResp(w, cfg)
@@ -2716,7 +2864,7 @@ func handleUserAssets(w http.ResponseWriter, r *http.Request, uid int) {
 		WHERE a.current_user=? AND a.status='已领用'
 		ORDER BY a.asset_tag`, userName)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer rows.Close()
@@ -2795,16 +2943,6 @@ type XMLScrappedAsset struct {
 	CustomValues []XMLCustomValue `xml:"custom-values>custom-value,omitempty"`
 }
 
-type XMLAttachment struct {
-	ID        int    `xml:"id"`
-	AssetID   int    `xml:"asset-id"`
-	FileName  string `xml:"file-name"`
-	FilePath  string `xml:"file-path"`
-	FileSize  int64  `xml:"file-size"`
-	MimeType  string `xml:"mime-type"`
-	CreatedAt string `xml:"created-at"`
-}
-
 
 type XMLAsset struct {
 	Asset
@@ -2826,7 +2964,7 @@ func handleExportXML(w http.ResponseWriter, r *http.Request) {
 
 	xmlData, err := exportXML()
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 
@@ -2871,15 +3009,16 @@ func exportXML() ([]byte, error) {
 		rows.Close()
 	}
 
-	// Users (include password hash for proper restore - reset if needed after import)
+	// Users (export WITHOUT password hash for security)
 	{
-		rows, err := db.Query("SELECT id, name, department, phone, email, coalesce(password,''), role, notes, active, created_at FROM users ORDER BY id")
+		rows, err := db.Query("SELECT id, name, department, phone, email, role, notes, active, created_at FROM users ORDER BY id")
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			var u User
-			rows.Scan(&u.ID, &u.Name, &u.Department, &u.Phone, &u.Email, &u.Password, &u.Role, &u.Notes, &u.Active, &u.CreatedAt)
+			rows.Scan(&u.ID, &u.Name, &u.Department, &u.Phone, &u.Email, &u.Role, &u.Notes, &u.Active, &u.CreatedAt)
+			u.Password = ""
 			x.Users = append(x.Users, u)
 		}
 		rows.Close()
@@ -2914,14 +3053,27 @@ func exportXML() ([]byte, error) {
 		x.Assets = append(x.Assets, xa)
 	}
 
-	// Scrapped assets
+	// Scrapped assets (with custom values)
 	{
-		scaRows, err := db.Query("SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at FROM scrapped_assets ORDER BY id")
+		scaRows, err := db.Query("SELECT id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at, COALESCE(custom_values,'') FROM scrapped_assets ORDER BY id")
 		if err == nil {
 			for scaRows.Next() {
 				var sa ScrappedAsset
-				scaRows.Scan(&sa.ID, &sa.AssetTag, &sa.Type, &sa.Brand, &sa.Model, &sa.Serial, &sa.CPU, &sa.Memory, &sa.Disk, &sa.Status, &sa.PurchaseDate, &sa.PurchasePrice, &sa.Supplier, &sa.WarrantyEnd, &sa.CurrentUser, &sa.Location, &sa.Notes, &sa.ScrapReason, &sa.ScrapNotes, &sa.ScrappedBy, &sa.ScrappedAt, &sa.RestoredAt, &sa.CreatedAt, &sa.UpdatedAt)
+				var customJSON string
+				scaRows.Scan(&sa.ID, &sa.AssetTag, &sa.Type, &sa.Brand, &sa.Model, &sa.Serial, &sa.CPU, &sa.Memory, &sa.Disk, &sa.Status, &sa.PurchaseDate, &sa.PurchasePrice, &sa.Supplier, &sa.WarrantyEnd, &sa.CurrentUser, &sa.Location, &sa.Notes, &sa.ScrapReason, &sa.ScrapNotes, &sa.ScrappedBy, &sa.ScrappedAt, &sa.RestoredAt, &sa.CreatedAt, &sa.UpdatedAt, &customJSON)
 				xsa := XMLScrappedAsset{ScrappedAsset: sa}
+				// Parse custom values from JSON
+				if customJSON != "" {
+					type cvRow struct{ FieldID int; FieldName string; FieldValue string }
+					var cvs []cvRow
+					if json.Unmarshal([]byte(customJSON), &cvs) == nil {
+						for _, cv := range cvs {
+							xsa.CustomValues = append(xsa.CustomValues, XMLCustomValue{
+								FieldID: cv.FieldID, FieldName: cv.FieldName, FieldValue: cv.FieldValue,
+							})
+						}
+					}
+				}
 				x.ScrappedAssets = append(x.ScrappedAssets, xsa)
 			}
 			scaRows.Close()
@@ -2975,33 +3127,33 @@ func handleImportXML(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseMultipartForm(32 << 20) // 32MB
 	if err != nil {
-		jsonErr(w, "Parse error: "+err.Error(), 400)
+		logErr(w, "Parse error", err, 400)
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		jsonErr(w, "File required: "+err.Error(), 400)
+		logErr(w, "File required", err, 400)
 		return
 	}
 	defer file.Close()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		jsonErr(w, "Read error: "+err.Error(), 400)
+		logErr(w, "Read error", err, 400)
 		return
 	}
 
 	var x XMLExport
 	if err := xml.Unmarshal(data, &x); err != nil {
-		jsonErr(w, "XML解析失败: "+err.Error(), 400)
+		logErr(w, "XML解析失败", err, 400)
 		return
 	}
 
 	// Import in a transaction
 	tx, err := db.Begin()
 	if err != nil {
-		jsonErr(w, "Database error: "+err.Error(), 500)
+		logErr(w, "Database error", err, 500)
 		return
 	}
 	defer tx.Rollback()
@@ -3023,20 +3175,25 @@ func handleImportXML(w http.ResponseWriter, r *http.Request) {
 		result, err := tx.Exec("INSERT INTO custom_fields (field_name, field_type, field_options, sort_order) VALUES (?,?,?,?)",
 			f.FieldName, f.FieldType, f.Options, f.SortOrder)
 		if err != nil {
-			jsonErr(w, "导入自定义字段失败: "+err.Error(), 500)
+			logErr(w, "导入自定义字段失败", err, 500)
 			return
 		}
 		newID, _ := result.LastInsertId()
 		fieldIDMap[f.ID] = int(newID)
 	}
 
-	// Import users
+	// Import users (set default password for imported users with empty password)
 	userIDMap := make(map[int]int) // old ID -> new ID
+	defaultPW := hashPassword("123456")
 	for _, u := range x.Users {
+		pw := u.Password
+		if pw == "" {
+			pw = defaultPW
+		}
 		result, err := tx.Exec("INSERT INTO users (name, department, phone, email, password, role, notes, active, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-			u.Name, u.Department, u.Phone, u.Email, u.Password, u.Role, u.Notes, u.Active, u.CreatedAt)
+			u.Name, u.Department, u.Phone, u.Email, pw, u.Role, u.Notes, u.Active, u.CreatedAt)
 		if err != nil {
-			jsonErr(w, "导入用户失败: "+err.Error(), 500)
+			logErr(w, "导入用户失败", err, 500)
 			return
 		}
 		newID, _ := result.LastInsertId()
@@ -3048,7 +3205,7 @@ func handleImportXML(w http.ResponseWriter, r *http.Request) {
 		result, err := tx.Exec(`INSERT INTO assets (asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			a.AssetTag, a.Type, a.Brand, a.Model, a.Serial, a.CPU, a.Memory, a.Disk, a.Status, a.PurchaseDate, a.PurchasePrice, a.Supplier, a.WarrantyEnd, a.CurrentUser, a.Location, a.Notes, a.CreatedAt, a.UpdatedAt)
 		if err != nil {
-			jsonErr(w, "导入资产失败: "+err.Error(), 500)
+			logErr(w, "导入资产失败", err, 500)
 			return
 		}
 		newAssetID, _ := result.LastInsertId()
@@ -3075,15 +3232,26 @@ func handleImportXML(w http.ResponseWriter, r *http.Request) {
 			t.AssetID, t.Action, t.Operator, t.TargetUser, t.Notes, t.CreatedAt, t.AssetTag)
 	}
 
-	// Import scrapped assets
+	// Import scrapped assets (with custom values)
 	for _, sa := range x.ScrappedAssets {
-		tx.Exec("INSERT INTO scrapped_assets (id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		customJSON := ""
+		if len(sa.CustomValues) > 0 {
+			type cvRow struct{ FieldID int; FieldName string; FieldValue string }
+			var cvs []cvRow
+			for _, cv := range sa.CustomValues {
+				cvs = append(cvs, cvRow{cv.FieldID, cv.FieldName, cv.FieldValue})
+			}
+			if data, err := json.Marshal(cvs); err == nil {
+				customJSON = string(data)
+			}
+		}
+		tx.Exec("INSERT INTO scrapped_assets (id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at, custom_values) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			sa.ID, sa.AssetTag, sa.Type, sa.Brand, sa.Model, sa.Serial,
 			sa.CPU, sa.Memory, sa.Disk, sa.Status,
 			sa.PurchaseDate, sa.PurchasePrice, sa.Supplier, sa.WarrantyEnd,
 			sa.CurrentUser, sa.Location, sa.Notes,
 			sa.ScrapReason, sa.ScrapNotes, sa.ScrappedBy,
-			sa.ScrappedAt, sa.RestoredAt, sa.CreatedAt, sa.UpdatedAt)
+			sa.ScrappedAt, sa.RestoredAt, sa.CreatedAt, sa.UpdatedAt, customJSON)
 	}
 
 	// Save config (convert XMLConfig to AppConfig)
@@ -3101,7 +3269,7 @@ func handleImportXML(w http.ResponseWriter, r *http.Request) {
 	saveConfig(ac)
 
 	if err := tx.Commit(); err != nil {
-		jsonErr(w, "提交事务失败: "+err.Error(), 500)
+		logErr(w, "提交事务失败", err, 500)
 		return
 	}
 
@@ -3125,7 +3293,7 @@ func handleExportBackup(w http.ResponseWriter, r *http.Request) {
 	// Generate XML data
 	xmlData, err := exportXML()
 	if err != nil {
-		jsonErr(w, "Export failed: "+err.Error(), 500)
+		logErr(w, "Export failed", err, 500)
 		return
 	}
 
@@ -3170,26 +3338,26 @@ func handleImportBackup(w http.ResponseWriter, r *http.Request) {
 
 	err := r.ParseMultipartForm(256 << 20) // 256MB
 	if err != nil {
-		jsonErr(w, "Parse error: "+err.Error(), 400)
+		logErr(w, "Parse error", err, 400)
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		jsonErr(w, "File required: "+err.Error(), 400)
+		logErr(w, "File required", err, 400)
 		return
 	}
 	defer file.Close()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
-		jsonErr(w, "Read error: "+err.Error(), 500)
+		logErr(w, "Read error", err, 500)
 		return
 	}
 
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		jsonErr(w, "Invalid ZIP file: "+err.Error(), 400)
+		logErr(w, "Invalid ZIP file", err, 400)
 		return
 	}
 
@@ -3219,7 +3387,7 @@ func handleImportBackup(w http.ResponseWriter, r *http.Request) {
 	// Import XML
 	var x XMLExport
 	if err := xml.Unmarshal(xmlContent, &x); err != nil {
-		jsonErr(w, "XML parse error: "+err.Error(), 400)
+		logErr(w, "XML parse error", err, 400)
 		return
 	}
 
@@ -3228,7 +3396,7 @@ func handleImportBackup(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := db.Begin()
 	if err != nil {
-		jsonErr(w, "Begin transaction failed: "+err.Error(), 500)
+		logErr(w, "Begin transaction failed", err, 500)
 		return
 	}
 	defer tx.Rollback()
@@ -3245,16 +3413,24 @@ func handleImportBackup(w http.ResponseWriter, r *http.Request) {
 	// Reimport admin (keep original admin password if not in backup)
 	// admin will be imported from XML if present; skipped by WHERE name != 'admin'
 
-	// Import users
+	// Import users (skip admin to preserve current admin credentials, set default password if empty)
+	defaultPW := hashPassword("123456")
 	for _, u := range x.Users {
+		if u.Name == "admin" {
+			continue
+		}
+		pw := u.Password
+		if pw == "" {
+			pw = defaultPW
+		}
 		tx.Exec("INSERT INTO users (id, name, department, phone, email, password, role, notes, active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-			u.ID, u.Name, u.Department, u.Phone, u.Email, u.Password, u.Role, u.Notes, u.Active, u.CreatedAt)
+			u.ID, u.Name, u.Department, u.Phone, u.Email, pw, u.Role, u.Notes, u.Active, u.CreatedAt)
 	}
 
-	// Import custom fields
+	// Import custom fields (with field_options)
 	for _, cf := range x.CustomFields {
-		tx.Exec("INSERT INTO custom_fields (id, field_name, field_type, sort_order) VALUES (?,?,?,?)",
-			cf.ID, cf.FieldName, cf.FieldType, cf.SortOrder)
+		tx.Exec("INSERT INTO custom_fields (id, field_name, field_type, field_options, sort_order) VALUES (?,?,?,?,?)",
+			cf.ID, cf.FieldName, cf.FieldType, cf.Options, cf.SortOrder)
 	}
 
 	// Import assets
@@ -3293,15 +3469,26 @@ func handleImportBackup(w http.ResponseWriter, r *http.Request) {
 			att.ID, att.AssetID, att.FileName, att.FilePath, att.FileSize, att.MimeType, att.CreatedAt)
 	}
 
-	// Import scrapped assets
+	// Import scrapped assets (with custom values)
 	for _, sa := range x.ScrappedAssets {
-		tx.Exec("INSERT INTO scrapped_assets (id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		customJSON := ""
+		if len(sa.CustomValues) > 0 {
+			type cvRow struct{ FieldID int; FieldName string; FieldValue string }
+			var cvs []cvRow
+			for _, cv := range sa.CustomValues {
+				cvs = append(cvs, cvRow{cv.FieldID, cv.FieldName, cv.FieldValue})
+			}
+			if data, err := json.Marshal(cvs); err == nil {
+				customJSON = string(data)
+			}
+		}
+		tx.Exec("INSERT INTO scrapped_assets (id, asset_tag, type, brand, model, serial, cpu, memory, disk, status, purchase_date, purchase_price, supplier, warranty_end, current_user, location, notes, scrap_reason, scrap_notes, scrapped_by, scrapped_at, restored_at, created_at, updated_at, custom_values) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			sa.ID, sa.AssetTag, sa.Type, sa.Brand, sa.Model, sa.Serial,
 			sa.CPU, sa.Memory, sa.Disk, sa.Status,
 			sa.PurchaseDate, sa.PurchasePrice, sa.Supplier, sa.WarrantyEnd,
 			sa.CurrentUser, sa.Location, sa.Notes,
 			sa.ScrapReason, sa.ScrapNotes, sa.ScrappedBy,
-			sa.ScrappedAt, sa.RestoredAt, sa.CreatedAt, sa.UpdatedAt)
+			sa.ScrappedAt, sa.RestoredAt, sa.CreatedAt, sa.UpdatedAt, customJSON)
 	}
 
 	// Save config (convert XMLConfig to AppConfig)
@@ -3319,7 +3506,7 @@ func handleImportBackup(w http.ResponseWriter, r *http.Request) {
 	saveConfig(ac)
 
 	if err := tx.Commit(); err != nil {
-		jsonErr(w, "提交事务失败: "+err.Error(), 500)
+		logErr(w, "提交事务失败", err, 500)
 		return
 	}
 
@@ -3376,7 +3563,8 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		Path:    "/",
 		MaxAge:  86400, // 24h
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
 	})
 
 	jsonResp(w, map[string]interface{}{
@@ -3446,7 +3634,7 @@ func handleAttachments(w http.ResponseWriter, r *http.Request) {
 func listAttachments(w http.ResponseWriter, assetID int) {
 	rows, err := db.Query("SELECT id, asset_id, file_name, file_path, file_size, mime_type, created_at FROM attachments WHERE asset_id=? ORDER BY created_at DESC", assetID)
 	if err != nil {
-		jsonErr(w, err.Error(), 500)
+		logErr(w, "Internal server error", err, 500)
 		return
 	}
 	defer rows.Close()
@@ -3463,13 +3651,13 @@ func listAttachments(w http.ResponseWriter, assetID int) {
 func uploadAttachment(w http.ResponseWriter, r *http.Request, assetID int) {
 	err := r.ParseMultipartForm(32 << 20) // 32MB max
 	if err != nil {
-		jsonErr(w, "Parse error: "+err.Error(), 400)
+		logErr(w, "Parse error", err, 400)
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		jsonErr(w, "File required: "+err.Error(), 400)
+		logErr(w, "File required", err, 400)
 		return
 	}
 	defer file.Close()
@@ -3524,21 +3712,21 @@ func uploadAttachment(w http.ResponseWriter, r *http.Request, assetID int) {
 
 	dst, err := os.Create(savePath)
 	if err != nil {
-		jsonErr(w, "Save error: "+err.Error(), 500)
+		logErr(w, "Save error", err, 500)
 		return
 	}
 	defer dst.Close()
 
 	written, err := io.Copy(dst, file)
 	if err != nil {
-		jsonErr(w, "Write error: "+err.Error(), 500)
+		logErr(w, "Write error", err, 500)
 		return
 	}
 
 	_, err = db.Exec("INSERT INTO attachments (asset_id, file_name, file_path, file_size, mime_type) VALUES (?,?,?,?,?)",
 		assetID, header.Filename, name, written, detectedMime)
 	if err != nil {
-		jsonErr(w, "DB error: "+err.Error(), 500)
+		logErr(w, "DB error", err, 500)
 		return
 	}
 

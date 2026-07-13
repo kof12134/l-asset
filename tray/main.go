@@ -87,11 +87,13 @@ func startServer(cfg Config, appDir string) error {
 		cmd.Stderr = f
 	}
 
+	serverCmd.Store(cmd)
+
 	if err := cmd.Start(); err != nil {
+		serverCmd.Store((*exec.Cmd)(nil))
 		return fmt.Errorf("启动服务失败: %v", err)
 	}
 
-	serverCmd.Store(cmd)
 	log.Printf("服务启动成功, PID: %d", cmd.Process.Pid)
 	return nil
 }
